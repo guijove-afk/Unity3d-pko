@@ -1,0 +1,542 @@
+
+# Script 9: PlayerManager e Network Manager TOP
+
+# PlayerManager.cs
+player_manager = '''using UnityEngine;
+using Mirror;
+using System.Collections.Generic;
+
+/// <summary>
+/// Gerenciador de jogadores no servidor
+/// Controla spawn, lista de jogadores, e sistema PK
+/// </summary>
+public class PlayerManager : NetworkBehaviour
+{
+    public static PlayerManager Instance { get; private set; }
+    
+    [SyncObject]
+    private readonly SyncList<PlayerInfo> onlinePlayers = new SyncList<PlayerInfo>();
+    
+    [Header("Spawn")]
+    [SerializeField] private Transform[] spawnPoints;
+    [SerializeField] private GameObject playerPrefab;
+    
+    [Header("Configurações TOP")]
+    [SerializeField] private bool enablePK = true;
+    [SerializeField] private int maxPKValue = 100;
+    [SerializeField] private int pkPenaltyEXP = 10; // % de EXP perdida
+    
+    private Dictionary<uint, NetworkIdentity> playerList = new Dictionary<uint, NetworkIdentity>();
+    
+    void Awake()
+    {
+        if (Instance == null) Instance = this;
+    }
+    
+    #region Spawn
+    public override void OnStartServer()
+    {
+        NetworkManager.singleton.onServerAddPlayer += OnServerAddPlayer;
+        NetworkManager.singleton.onServerDisconnect += OnServerDisconnect;
+    }
+    
+    [Server]
+    private void OnServerAddPlayer(NetworkConnection conn)
+    {
+        Transform spawn = GetSpawnPoint();
+        GameObject player = Instantiate(playerPrefab, spawn.position, spawn.rotation);
+        
+        NetworkServer.AddPlayerForConnection(conn, player);
+        
+        // Inicializa jogador
+        CharacterStats stats = player.GetComponent<CharacterStats>();
+        if (stats != null)
+        {
+            stats.InitializeStats();
+        }
+        
+        // Adiciona à lista
+        PlayerInfo info = new PlayerInfo
+        {
+            netId = player.GetComponent<NetworkIdentity>().netId,
+            playerName = player.name,
+            level = 1,
+            characterClass = CharacterClass.None
+        };
+        
+        onlinePlayers.Add(info);
+        playerList[info.netId] = player.GetComponent<NetworkIdentity>();
+    }
+    
+    [Server]
+    private void OnServerDisconnect(NetworkConnection conn)
+    {
+        if (conn.identity != null)
+        {
+            uint netId = conn.identity.netId;
+            
+            // Remove da lista
+            for (int i = onlinePlayers.Count - 1; i >= 0; i--)
+            {
+                if (onlinePlayers[i].netId == netId)
+                {
+                    onlinePlayers.RemoveAt(i);
+                    break;
+                }
+            }
+            
+            playerList.Remove(netId);
+        }
+    }
+    
+    private Transform GetSpawnPoint()
+    {
+        if (spawnPoints.Length == 0) return transform;
+        return spawnPoints[Random.Range(0, spawnPoints.Length)];
+    }
+    #endregion
+    
+    #region PK System
+    [Server]
+    public void OnPlayerKill(uint killerId, uint victimId)
+    {
+        if (!enablePK) return;
+        
+        NetworkIdentity killer = GetPlayer(killerId);
+        NetworkIdentity victim = GetPlayer(victimId);
+        
+        if (killer == null || victim == null) return;
+        
+        CharacterStats killerStats = killer.GetComponent<CharacterStats>();
+        CharacterStats victimStats = victim.GetComponent<CharacterStats>();
+        
+        if (killerStats == null || victimStats == null) return;
+        
+        // Adiciona PK value ao killer
+        // killerStats.AddPKValue(1);
+        
+        // Penalidade de EXP para vítima
+        int expLoss = Mathf.FloorToInt(victimStats.Experience * (pkPenaltyEXP / 100f));
+        // victimStats.RemoveExperience(expLoss);
+        
+        // Notifica
+        TargetOnPlayerKilled(killer.connectionToClient, victim.name);
+        TargetOnPlayerKilled(victim.connectionToClient, killer.name);
+    }
+    
+    [TargetRpc]
+    private void TargetOnPlayerKilled(NetworkConnection target, string killerName)
+    {
+        UIManager.Instance?.ShowKillNotification(killerName);
+    }
+    #endregion
+    
+    #region Utilidades
+    public NetworkIdentity GetPlayer(uint netId)
+    {
+        if (playerList.TryGetValue(netId, out NetworkIdentity identity))
+        {
+            return identity;
+        }
+        return null;
+    }
+    
+    public List<NetworkIdentity> GetNearbyPlayers(Vector3 position, float radius)
+    {
+        List<NetworkIdentity> nearby = new List<NetworkIdentity>();
+        
+        foreach (var kvp in playerList)
+        {
+            if (Vector3.Distance(position, kvp.Value.transform.position) <= radius)
+            {
+                nearby.Add(kvp.Value);
+            }
+        }
+        
+        return nearby;
+    }
+    
+    public int GetOnlineCount()
+    {
+        return onlinePlayers.Count;
+    }
+    #endregion
+}
+
+[System.Serializable]
+public struct PlayerInfo : Mirror.NetworkMessage
+{
+    public uint netId;
+    public string playerName;
+    public int level;
+    public CharacterClass characterClass;
+    public int pkValue;
+    public bool isGM;
+}
+'''
+
+# TOPNetworkManager.cs
+network_manager = '''using UnityEngine;
+using Mirror;
+
+/// <summary>
+/// Network Manager customizado para Tales of Pirates
+/// Herda de NetworkManager do Mirror
+/// </summary>
+public class TOPNetworkManager : NetworkManager
+{
+    [Header("Tales of Pirates")]
+    [SerializeField] private bool useEncryption = true;
+    [SerializeField] private int maxPlayers = 1000;
+    [SerializeField] private int maxConnectionsPerIP = 3;
+    
+    [Header("Spawn")]
+    [SerializeField] private Transform[] spawnPoints;
+    
+    [Header("Prefabs")]
+    [SerializeField] private GameObject[] monsterPrefabs;
+    [SerializeField] private GameObject[] npcPrefabs;
+    
+    public override void Awake()
+    {
+        base.Awake();
+        
+        // Configurações do TOP
+        maxConnections = maxPlayers;
+    }
+    
+    public override void OnStartServer()
+    {
+        base.OnStartServer();
+        
+        Debug.Log("[TOP] Servidor iniciado!");
+        
+        // Spawna NPCs e monstros
+        SpawnWorldEntities();
+    }
+    
+    public override void OnServerConnect(NetworkConnectionToClient conn)
+    {
+        base.OnServerConnect(conn);
+        
+        // Verifica limite de conexões por IP
+        // Implementar anti-DDoS
+    }
+    
+    public override void OnServerAddPlayer(NetworkConnectionToClient conn)
+    {
+        // Spawn do jogador em ponto aleatório
+        Transform spawn = spawnPoints.Length > 0 
+            ? spawnPoints[Random.Range(0, spawnPoints.Length)] 
+            : null;
+        
+        GameObject player = spawn != null 
+            ? Instantiate(playerPrefab, spawn.position, spawn.rotation)
+            : Instantiate(playerPrefab);
+        
+        NetworkServer.AddPlayerForConnection(conn, player);
+        
+        Debug.Log($"[TOP] Jogador spawnado: {conn.address}");
+    }
+    
+    public override void OnServerDisconnect(NetworkConnectionToClient conn)
+    {
+        // Salva dados do jogador
+        SavePlayerData(conn);
+        
+        base.OnServerDisconnect(conn);
+    }
+    
+    [Server]
+    private void SpawnWorldEntities()
+    {
+        // Spawna monstros nos pontos de spawn
+        // Spawna NPCs nas cidades
+    }
+    
+    [Server]
+    private void SavePlayerData(NetworkConnection conn)
+    {
+        if (conn.identity == null) return;
+        
+        // Salva stats, inventário, equipamentos, etc.
+        // Implementar sistema de persistência
+    }
+    
+    // Métodos de utilidade
+    public void SpawnMonster(int monsterId, Vector3 position)
+    {
+        if (monsterId < 0 || monsterId >= monsterPrefabs.Length) return;
+        
+        GameObject monster = Instantiate(monsterPrefabs[monsterId], position, Quaternion.identity);
+        NetworkServer.Spawn(monster);
+    }
+}
+'''
+
+# PlayerAppearance.cs
+player_appearance = '''using UnityEngine;
+using Mirror;
+
+/// <summary>
+/// Controle de aparência do personagem (sexo, cabelo, rosto, corpo)
+/// </summary>
+public class PlayerAppearance : NetworkBehaviour
+{
+    [SyncVar(hook = nameof(OnGenderChanged))]
+    private Gender _gender;
+    
+    [SyncVar(hook = nameof(OnHairStyleChanged))]
+    private int _hairStyle;
+    
+    [SyncVar(hook = nameof(OnHairColorChanged))]
+    private Color _hairColor;
+    
+    [SyncVar(hook = nameof(OnFaceStyleChanged))]
+    private int _faceStyle;
+    
+    [SyncVar(hook = nameof(OnSkinColorChanged))]
+    private Color _skinColor;
+    
+    [Header("Renderers")]
+    [SerializeField] private SkinnedMeshRenderer bodyRenderer;
+    [SerializeField] private SkinnedMeshRenderer hairRenderer;
+    [SerializeField] private SkinnedMeshRenderer faceRenderer;
+    
+    [Header("Materiais")]
+    [SerializeField] private Material[] hairMaterials;
+    [SerializeField] private Material[] skinMaterials;
+    
+    public Gender Gender => _gender;
+    public int HairStyle => _hairStyle;
+    public Color HairColor => _hairColor;
+    public int FaceStyle => _faceStyle;
+    public Color SkinColor => _skinColor;
+    
+    public event System.Action OnAppearanceChanged;
+    
+    [Server]
+    public void SetAppearance(Gender gender, int hairStyle, Color hairColor, int faceStyle, Color skinColor)
+    {
+        _gender = gender;
+        _hairStyle = hairStyle;
+        _hairColor = hairColor;
+        _faceStyle = faceStyle;
+        _skinColor = skinColor;
+        
+        RpcUpdateAppearance(gender, hairStyle, hairColor, faceStyle, skinColor);
+    }
+    
+    [ClientRpc]
+    private void RpcUpdateAppearance(Gender gender, int hairStyle, Color hairColor, int faceStyle, Color skinColor)
+    {
+        ApplyAppearance(gender, hairStyle, hairColor, faceStyle, skinColor);
+    }
+    
+    private void ApplyAppearance(Gender gender, int hairStyle, Color hairColor, int faceStyle, Color skinColor)
+    {
+        // Aplica materiais e meshes
+        if (hairRenderer != null && hairStyle < hairMaterials.Length)
+        {
+            hairRenderer.material = hairMaterials[hairStyle];
+            hairRenderer.material.color = hairColor;
+        }
+        
+        if (bodyRenderer != null)
+        {
+            bodyRenderer.material.color = skinColor;
+        }
+        
+        OnAppearanceChanged?.Invoke();
+    }
+    
+    private void OnGenderChanged(Gender oldVal, Gender newVal) => OnAppearanceChanged?.Invoke();
+    private void OnHairStyleChanged(int oldVal, int newVal) => OnAppearanceChanged?.Invoke();
+    private void OnHairColorChanged(Color oldVal, Color newVal) => OnAppearanceChanged?.Invoke();
+    private void OnFaceStyleChanged(int oldVal, int newVal) => OnAppearanceChanged?.Invoke();
+    private void OnSkinColorChanged(Color oldVal, Color newVal) => OnAppearanceChanged?.Invoke();
+}
+'''
+
+# CameraController.cs
+camera_controller = '''using UnityEngine;
+
+/// <summary>
+/// Câmera em terceira pessoa estilo Tales of Pirates
+/// </summary>
+public class CameraController : MonoBehaviour
+{
+    [Header("Target")]
+    [SerializeField] private Transform target;
+    
+    [Header("Distância")]
+    [SerializeField] private float defaultDistance = 8f;
+    [SerializeField] private float minDistance = 3f;
+    [SerializeField] private float maxDistance = 15f;
+    [SerializeField] private float zoomSpeed = 5f;
+    
+    [Header("Ângulo")]
+    [SerializeField] private float defaultHeight = 5f;
+    [SerializeField] private float minHeight = 1f;
+    [SerializeField] private float maxHeight = 10f;
+    [SerializeField] private float rotationSpeed = 3f;
+    
+    [Header("Suavização")]
+    [SerializeField] private float positionSmooth = 5f;
+    [SerializeField] private float rotationSmooth = 5f;
+    
+    [Header("Colisão")]
+    [SerializeField] private bool enableCollision = true;
+    [SerializeField] private LayerMask collisionLayers;
+    [SerializeField] private float collisionOffset = 0.2f;
+    
+    private float currentDistance;
+    private float currentHeight;
+    private float currentRotationX;
+    private float currentRotationY;
+    private Vector3 desiredPosition;
+    private Quaternion desiredRotation;
+    
+    void Start()
+    {
+        currentDistance = defaultDistance;
+        currentHeight = defaultHeight;
+        
+        // Ângulo inicial (estilo TOP: isométrico)
+        currentRotationX = 45f;
+        currentRotationY = -45f;
+    }
+    
+    void LateUpdate()
+    {
+        if (target == null) return;
+        
+        HandleInput();
+        CalculatePosition();
+        ApplyPosition();
+    }
+    
+    private void HandleInput()
+    {
+        // Zoom com scroll
+        float scroll = Input.GetAxis("Mouse ScrollWheel");
+        currentDistance -= scroll * zoomSpeed;
+        currentDistance = Mathf.Clamp(currentDistance, minDistance, maxDistance);
+        
+        // Rotação com botão do meio (estilo TOP)
+        if (Input.GetMouseButton(2))
+        {
+            float mouseX = Input.GetAxis("Mouse X") * rotationSpeed;
+            float mouseY = Input.GetAxis("Mouse Y") * rotationSpeed;
+            
+            currentRotationX += mouseY;
+            currentRotationY += mouseX;
+            
+            currentRotationX = Mathf.Clamp(currentRotationX, 10f, 80f);
+        }
+        
+        // Altura com shift + scroll (TOP)
+        if (Input.GetKey(KeyCode.LeftShift))
+        {
+            currentHeight += scroll * zoomSpeed * 2f;
+            currentHeight = Mathf.Clamp(currentHeight, minHeight, maxHeight);
+        }
+    }
+    
+    private void CalculatePosition()
+    {
+        // Calcula posição baseada em rotação e distância
+        Quaternion rotation = Quaternion.Euler(currentRotationX, currentRotationY, 0);
+        Vector3 direction = rotation * Vector3.back;
+        
+        desiredPosition = target.position + Vector3.up * currentHeight + direction * currentDistance;
+        desiredRotation = Quaternion.LookRotation(target.position + Vector3.up * 2f - desiredPosition);
+        
+        // Colisão
+        if (enableCollision)
+        {
+            RaycastHit hit;
+            Vector3 targetPos = target.position + Vector3.up * currentHeight;
+            
+            if (Physics.Raycast(targetPos, direction, out hit, currentDistance, collisionLayers))
+            {
+                desiredPosition = hit.point - direction * collisionOffset;
+            }
+        }
+    }
+    
+    private void ApplyPosition()
+    {
+        transform.position = Vector3.Lerp(transform.position, desiredPosition, positionSmooth * Time.deltaTime);
+        transform.rotation = Quaternion.Slerp(transform.rotation, desiredRotation, rotationSmooth * Time.deltaTime);
+    }
+    
+    public void SetTarget(Transform newTarget)
+    {
+        target = newTarget;
+    }
+    
+    public void ResetCamera()
+    {
+        currentDistance = defaultDistance;
+        currentHeight = defaultHeight;
+        currentRotationX = 45f;
+        currentRotationY = -45f;
+    }
+    
+    public void Shake(float intensity, float duration)
+    {
+        StartCoroutine(ShakeCoroutine(intensity, duration));
+    }
+    
+    private System.Collections.IEnumerator ShakeCoroutine(float intensity, float duration)
+    {
+        float elapsed = 0;
+        Vector3 originalPos = transform.localPosition;
+        
+        while (elapsed < duration)
+        {
+            float x = Random.Range(-1f, 1f) * intensity;
+            float y = Random.Range(-1f, 1f) * intensity;
+            
+            transform.localPosition = originalPos + new Vector3(x, y, 0);
+            
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        
+        transform.localPosition = originalPos;
+    }
+}
+
+public class CameraShake : MonoBehaviour
+{
+    public static CameraShake Instance { get; private set; }
+    
+    void Awake()
+    {
+        if (Instance == null) Instance = this;
+    }
+    
+    public void Shake(float intensity, float duration)
+    {
+        CameraController controller = Camera.main?.GetComponent<CameraController>();
+        controller?.Shake(intensity, duration);
+    }
+}
+'''
+
+scripts = {
+    "PlayerManager.cs": player_manager,
+    "TOPNetworkManager.cs": network_manager,
+    "PlayerAppearance.cs": player_appearance,
+    "CameraController.cs": camera_controller
+}
+
+for filename, content in scripts.items():
+    with open(f"{base_path}/Scripts/Networking/{filename}", "w") as f:
+        f.write(content)
+
+print("✅ Network e Player Managers criados:")
+for name in scripts.keys():
+    print(f"   - {name}")

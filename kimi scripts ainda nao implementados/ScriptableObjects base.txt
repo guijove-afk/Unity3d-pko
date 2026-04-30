@@ -1,0 +1,339 @@
+
+# Script 7: ScriptableObjects base
+
+# ItemData.cs
+item_data = '''using UnityEngine;
+
+/// <summary>
+/// ScriptableObject base para todos os itens do Tales of Pirates
+/// </summary>
+[CreateAssetMenu(fileName = "NewItem", menuName = "TOP/Item")]
+public class ItemData : ScriptableObject
+{
+    [Header("Informações Básicas")]
+    public string itemId;
+    public string itemName;
+    [TextArea(3, 5)] public string description;
+    public Sprite icon;
+    public ItemType itemType;
+    public ItemRarity rarity;
+    
+    [Header("Restrições")]
+    public int requiredLevel;
+    public CharacterClass requiredClass;
+    public Gender requiredGender;
+    public bool isBound;
+    public bool isBoundOnEquip;
+    public bool isTradable;
+    public bool isDroppable;
+    
+    [Header("Propriedades")]
+    public bool isStackable;
+    public int maxStackSize = 99;
+    public int maxDurability = 100;
+    public int itemLevel; // Nível do item (para refinamento)
+    public int sellPrice;
+    public int buyPrice;
+    
+    [Header("Visual")]
+    public GameObject modelPrefab;
+    public Vector3 localPosition = Vector3.zero;
+    public Vector3 localRotation = Vector3.zero;
+    public Vector3 localScale = Vector3.one;
+    
+    [Header("Efeitos")]
+    public AudioClip useSFX;
+    public ParticleSystem useVFX;
+    
+    private void OnValidate()
+    {
+        if (string.IsNullOrEmpty(itemId))
+        {
+            itemId = System.Guid.NewGuid().ToString("N").Substring(0, 8);
+        }
+    }
+}
+
+public enum ItemRarity
+{
+    Common,      // Branco
+    Uncommon,    // Verde
+    Rare,        // Azul
+    Epic,        // Roxo
+    Legendary,   // Dourado
+    Mythic       // Vermelho
+}
+'''
+
+# EquipmentData.cs
+equipment_data = '''using UnityEngine;
+using System.Collections.Generic;
+
+/// <summary>
+/// ScriptableObject para equipamentos do Tales of Pirates
+/// </summary>
+[CreateAssetMenu(fileName = "NewEquipment", menuName = "TOP/Equipment")]
+public class EquipmentData : ItemData
+{
+    [Header("Slot")]
+    public EquipmentSlot equipmentSlot;
+    
+    [Header("Stats")]
+    public List<StatModifier> statModifiers = new List<StatModifier>();
+    
+    [Header("Refinamento")]
+    public int maxRefinement = 10;
+    public List<RefinementStat> refinementStats = new List<RefinementStat>();
+    
+    [Header("Gems")]
+    public int maxGems = 0; // Quantos sockets
+    
+    [Header("Set")]
+    public string setName; // Nome do set (vazio = não faz parte de set)
+    
+    [Header("Aparência")]
+    public bool hideHair; // Esconde cabelo (capacetes)
+    public bool hideFace; // Esconde rosto
+}
+'''
+
+# SkillData.cs
+skill_data = '''using UnityEngine;
+using System.Collections.Generic;
+
+/// <summary>
+/// ScriptableObject para skills do Tales of Pirates
+/// </summary>
+[CreateAssetMenu(fileName = "NewSkill", menuName = "TOP/Skill")]
+public class SkillData : ScriptableObject
+{
+    [Header("Informações")]
+    public string skillId;
+    public string skillName;
+    [TextArea(3, 5)] public string description;
+    public Sprite icon;
+    public SkillType skillType;
+    public TargetType targetType;
+    
+    [Header("Requisitos")]
+    public int requiredLevel;
+    public CharacterClass requiredClass;
+    public int skillPointCost = 1;
+    public int upgradeCost = 1;
+    public List<string> requiredSkills = new List<string>(); // Pré-requisitos
+    public int maxLevel = 10;
+    
+    [Header("Custo")]
+    public int manaCost;
+    public int staminaCost;
+    public float healthCost; // % de HP
+    
+    [Header("Casting")]
+    public float castTime;
+    public float cooldown;
+    public float range;
+    public float areaRadius; // Para skills de área
+    public float coneAngle; // Para skills em cone
+    
+    [Header("Dano/Efeito")]
+    public int baseDamage;
+    public float damageMultiplier = 1f;
+    public DamageType damageType;
+    public List<StatusEffect> applyEffects = new List<StatusEffect>();
+    
+    [Header("Animação")]
+    public int animationId;
+    public bool spawnAtTarget;
+    public bool spawnAtSelf;
+    
+    [Header("VFX/SFX")]
+    public GameObject vfxPrefab;
+    public ParticleSystem castVFX;
+    public AudioClip sfxClip;
+    public float cameraShake;
+    public float cameraShakeDuration;
+    
+    [Header("Passiva")]
+    public bool isPassive;
+    public List<StatModifier> passiveModifiers = new List<StatModifier>();
+    
+    // Método de execução no servidor
+    public virtual void ExecuteServer(PlayerSkills caster, CharacterStats target, Vector3 position, Quaternion rotation)
+    {
+        // Override em subclasses específicas
+        if (target != null && baseDamage > 0)
+        {
+            int finalDamage = Mathf.FloorToInt(baseDamage * damageMultiplier * caster.GetComponent<CharacterStats>().MagicAttack / 10f);
+            target.TakeDamage(finalDamage, caster.GetComponent<NetworkIdentity>().netId, damageType);
+        }
+        
+        // Aplica efeitos
+        foreach (var effect in applyEffects)
+        {
+            target?.GetComponent<CharacterStats>()?.ApplyStatusEffect(effect);
+        }
+    }
+    
+    private void OnValidate()
+    {
+        if (string.IsNullOrEmpty(skillId))
+        {
+            skillId = System.Guid.NewGuid().ToString("N").Substring(0, 8);
+        }
+    }
+}
+'''
+
+# ClassData.cs
+class_data = '''using UnityEngine;
+
+/// <summary>
+/// ScriptableObject para classes do Tales of Pirates
+/// </summary>
+[CreateAssetMenu(fileName = "NewClass", menuName = "TOP/Class")]
+public class ClassData : ScriptableObject
+{
+    [Header("Informações")]
+    public CharacterClass characterClass;
+    public string className;
+    [TextArea(3, 5)] public string description;
+    public Sprite classIcon;
+    
+    [Header("Stats Base")]
+    public int baseStrength = 10;
+    public int baseAgility = 10;
+    public int baseConstitution = 10;
+    public int baseSpirit = 10;
+    public int baseAccuracy = 10;
+    public int baseLuck = 5;
+    
+    [Header("Stats por Level")]
+    public int strPerLevel = 1;
+    public int agiPerLevel = 1;
+    public int conPerLevel = 1;
+    public int sprPerLevel = 1;
+    public int accPerLevel = 1;
+    public int lukPerLevel = 1;
+    
+    [Header("Armas Permitidas")]
+    public List<WeaponType> allowedWeapons = new List<WeaponType>();
+    
+    [Header("Armaduras Permitidas")]
+    public List<ArmorType> allowedArmors = new List<ArmorType>();
+    
+    [Header("Skills Iniciais")]
+    public List<SkillData> startingSkills = new List<SkillData>();
+    
+    [Header("Evolução")]
+    public CharacterClass evolvesTo; // Segunda classe
+    public int evolutionLevel = 40; // Level para evoluir (TOP: 40)
+}
+
+public enum WeaponType
+{
+    Sword,
+    GreatSword,
+    Dagger,
+    Bow,
+    Gun,
+    Staff,
+    Wand,
+    Shield
+}
+
+public enum ArmorType
+{
+    Light,
+    Medium,
+    Heavy,
+    Robe
+}
+'''
+
+# GemData.cs
+gem_data = '''using UnityEngine;
+
+/// <summary>
+/// ScriptableObject para gems do Tales of Pirates
+/// </summary>
+[CreateAssetMenu(fileName = "NewGem", menuName = "TOP/Gem")]
+public class GemData : ItemData
+{
+    [Header("Propriedades da Gem")]
+    public StatModifier statModifier;
+    public int gemLevel; // Nível da gem (1-10)
+    public GemType gemType;
+    
+    [Header("Combinação")]
+    public bool canCombine; // 3 gems = 1 gem superior
+    public GemData combinesTo; // Resultado da combinação
+}
+
+public enum GemType
+{
+    Ruby,      // STR
+    Sapphire,  // AGI
+    Emerald,   // CON
+    Topaz,     // SPR
+    Diamond,   // ACC
+    Amethyst,  // LUK
+    Obsidian,  // ATK
+    Pearl      // DEF
+}
+'''
+
+# SetData.cs
+set_data = '''using UnityEngine;
+using System.Collections.Generic;
+
+/// <summary>
+/// ScriptableObject para sets de equipamentos
+/// </summary>
+[CreateAssetMenu(fileName = "NewSet", menuName = "TOP/Set")]
+public class SetData : ScriptableObject
+{
+    [Header("Informações")]
+    public string setName;
+    public string setDescription;
+    public Sprite setIcon;
+    
+    [Header("Bônus")]
+    public List<SetBonus> bonuses = new List<SetBonus>();
+    
+    [Header("Itens do Set")]
+    public List<EquipmentData> setItems = new List<EquipmentData>();
+}
+'''
+
+# SkillBookData.cs
+skill_book_data = '''using UnityEngine;
+
+/// <summary>
+/// ScriptableObject para livros de skill
+/// </summary>
+[CreateAssetMenu(fileName = "NewSkillBook", menuName = "TOP/Skill Book")]
+public class SkillBookData : ItemData
+{
+    [Header("Skill")]
+    public SkillData skillData;
+    public bool consumedOnUse = true;
+}
+'''
+
+scripts = {
+    "ItemData.cs": item_data,
+    "EquipmentData.cs": equipment_data,
+    "SkillData.cs": skill_data,
+    "ClassData.cs": class_data,
+    "GemData.cs": gem_data,
+    "SetData.cs": set_data,
+    "SkillBookData.cs": skill_book_data
+}
+
+for filename, content in scripts.items():
+    with open(f"{base_path}/Scripts/Database/{filename}", "w") as f:
+        f.write(content)
+
+print("✅ ScriptableObjects criados:")
+for name in scripts.keys():
+    print(f"   - {name}")

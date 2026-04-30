@@ -1,0 +1,755 @@
+
+# ============================================================
+# 10. SALVAR TODOS OS SCRIPTS EM ARQUIVOS
+# ============================================================
+
+import os
+
+output_dir = "/mnt/agents/output/TOP_Unity_Scripts"
+os.makedirs(output_dir, exist_ok=True)
+
+# Criar subpastas
+subfolders = {
+    "Core": ["CharacterClassData.cs", "ItemData.cs", "EquipmentData.cs", "ConsumableData.cs", 
+             "SkillData.cs", "QuestData.cs"],
+    "Databases": ["ItemDatabase.cs", "SkillDatabase.cs", "QuestDatabase.cs"],
+    "Player": ["PlayerStats.cs", "PlayerMovement.cs", "PlayerCombat.cs", "PlayerAnimation.cs",
+               "PlayerEquipment.cs", "PlayerSkills.cs", "PlayerInventory.cs", "PlayerConsumables.cs",
+               "PlayerHotbar.cs", "PlayerClass.cs", "PlayerRespawn.cs"],
+    "Systems": ["BuffManager.cs", "DamagePopupManager.cs", "LevelUpEffectManager.cs", 
+                "SkillProjectile.cs", "WorldItem.cs", "CameraController.cs"],
+    "NPC": ["NPCInteractable.cs"],
+    "UI": ["UIManager.cs"],
+    "Network": ["TOPNetworkManager.cs"],
+    "Game": ["GameManager.cs"]
+}
+
+# Salvar cada script
+for script_name, content in scripts.items():
+    # Encontra a subpasta
+    folder = "Other"
+    for f, files in subfolders.items():
+        if script_name in files:
+            folder = f
+            break
+    
+    folder_path = os.path.join(output_dir, folder)
+    os.makedirs(folder_path, exist_ok=True)
+    
+    file_path = os.path.join(folder_path, script_name)
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
+# Criar README com passo a passo
+readme = """# 🏴‍☠️ Tales of Pirates - Unity 3D Remake
+## Sistema Completo de Scripts
+
+---
+
+## 📁 Estrutura de Pastas
+
+```
+Assets/
+├── Scripts/
+│   ├── Core/           # ScriptableObjects (dados)
+│   ├── Databases/      # Bancos de dados
+│   ├── Player/         # Sistema do jogador
+│   ├── Systems/        # Sistemas auxiliares
+│   ├── NPC/            # NPCs e interação
+│   ├── UI/             # Interface
+│   ├── Network/        # Multiplayer (Mirror)
+│   └── Game/           # Gerenciamento do jogo
+├── ScriptableObjects/
+│   ├── Classes/        # Dados das classes
+│   ├── Items/          # Dados dos itens
+│   ├── Equipment/      # Dados dos equipamentos
+│   ├── Consumables/    # Dados dos consumíveis
+│   ├── Skills/         # Dados das skills
+│   └── Quests/         # Dados das quests
+├── Prefabs/
+│   ├── Player/         # Prefabs do jogador
+│   ├── NPC/            # Prefabs dos NPCs
+│   ├── Items/          # Prefabs dos itens no mundo
+│   ├── Effects/        # Efeitos visuais
+│   └── UI/             # Prefabs de UI
+├── Resources/
+│   └── Equipment/      # Modelos de equipamento
+└── Scenes/
+    ├── LoginScene      # Tela de login
+    ├── CharacterSelect # Seleção de personagem
+    └── GameScene       # Cena principal
+```
+
+---
+
+## 🚀 PASSO A PASSO DE INSTALAÇÃO
+
+### PASSO 1: Configurar o Projeto Unity
+
+1. **Criar projeto 3D (URP ou Built-in)**
+   - File → New Project → 3D (URP) ou 3D
+   - Nome: `TOP-Unity-Remake`
+
+2. **Instalar Mirror (Networking)**
+   - Window → Package Manager → "+" → Add package from git URL
+   - URL: `https://github.com/vis2k/Mirror.git?path=/Assets/Mirror`
+   - Ou baixar da Asset Store
+
+3. **Instalar NavMesh Components** (se necessário)
+   - Package Manager → "+" → Add package from git URL
+   - URL: `com.unity.ai.navigation`
+
+4. **Instalar TextMeshPro**
+   - Window → TextMeshPro → Import Essential Resources
+
+---
+
+### PASSO 2: Criar Estrutura de Pastas
+
+No Project window, criar:
+```
+Assets/
+├── Scripts/
+│   ├── Core/
+│   ├── Databases/
+│   ├── Player/
+│   ├── Systems/
+│   ├── NPC/
+│   ├── UI/
+│   ├── Network/
+│   └── Game/
+├── ScriptableObjects/
+│   ├── Classes/
+│   ├── Items/
+│   ├── Equipment/
+│   ├── Consumables/
+│   ├── Skills/
+│   └── Quests/
+├── Prefabs/
+│   ├── Player/
+│   ├── NPC/
+│   ├── Items/
+│   ├── Effects/
+│   └── UI/
+├── Resources/
+│   └── Equipment/
+├── Scenes/
+└── Animations/
+    ├── Player/
+    └── NPC/
+```
+
+---
+
+### PASSO 3: Importar Scripts
+
+1. **Copiar scripts para as pastas correspondentes:**
+   - `Scripts/Core/` → CharacterClassData.cs, ItemData.cs, EquipmentData.cs, ConsumableData.cs, SkillData.cs, QuestData.cs
+   - `Scripts/Databases/` → ItemDatabase.cs, SkillDatabase.cs, QuestDatabase.cs
+   - `Scripts/Player/` → PlayerStats.cs, PlayerMovement.cs, PlayerCombat.cs, PlayerAnimation.cs, PlayerEquipment.cs, PlayerSkills.cs, PlayerInventory.cs, PlayerConsumables.cs, PlayerHotbar.cs, PlayerClass.cs, PlayerRespawn.cs
+   - `Scripts/Systems/` → BuffManager.cs, DamagePopupManager.cs, LevelUpEffectManager.cs, SkillProjectile.cs, WorldItem.cs, CameraController.cs
+   - `Scripts/NPC/` → NPCInteractable.cs
+   - `Scripts/UI/` → UIManager.cs
+   - `Scripts/Network/` → TOPNetworkManager.cs
+   - `Scripts/Game/` → GameManager.cs
+
+2. **Aguardar compilação** (Unity compila automaticamente)
+
+---
+
+### PASSO 4: Criar ScriptableObjects
+
+#### 4.1 Classes do Jogador
+```
+Assets/ScriptableObjects/Classes/  (clicar com botão direito)
+→ Create → TOP → Character Class
+```
+
+Criar 9 ScriptableObjects:
+- **Swordsman** (Espadachim)
+  - baseSTR: 15, baseAGI: 10, baseCON: 12, baseSPR: 5, baseACC: 10, baseLUCK: 5
+  - strGrowth: 2.5, agiGrowth: 1.5, conGrowth: 2.0
+  - allowedWeapons: Sword, GreatSword, DualSword
+  - allowedArmors: Medium, Heavy
+
+- **Hunter** (Caçador)
+  - baseSTR: 8, baseAGI: 15, baseCON: 8, baseSPR: 5, baseACC: 15, baseLUCK: 5
+  - strGrowth: 1.5, agiGrowth: 2.5, conGrowth: 1.0
+  - allowedWeapons: Bow, Gun
+  - allowedArmors: Light
+
+- **Explorer** (Explorador)
+  - baseSTR: 10, baseAGI: 12, baseCON: 10, baseSPR: 5, baseACC: 10, baseLUCK: 10
+  - strGrowth: 2.0, agiGrowth: 2.0, conGrowth: 1.5
+  - allowedWeapons: Dagger, Sword
+  - allowedArmors: Light, Medium
+
+- **Herbalist** (Herbalista)
+  - baseSTR: 5, baseAGI: 8, baseCON: 8, baseSPR: 15, baseACC: 8, baseLUCK: 5
+  - strGrowth: 1.0, agiGrowth: 1.0, conGrowth: 1.0, sprGrowth: 2.5
+  - allowedWeapons: Staff, Wand
+  - allowedArmors: Robe
+
+- **Champion** (Campeão - 2ª classe)
+- **Crusader** (Cruzado - 2ª classe)
+- **Sharpshooter** (Atirador - 2ª classe)
+- **Voyager** (Navegador - 2ª classe)
+- **Cleric** (Clérigo - 2ª classe)
+
+#### 4.2 Itens de Teste
+```
+Assets/ScriptableObjects/Items/
+→ Create → TOP → Item
+```
+
+Criar itens básicos:
+- **Potion_HP_Small**: Consumable, restoreHP: 100
+- **Potion_MP_Small**: Consumable, restoreMP: 50
+- **Sword_Beginner**: Equipment, slot: Weapon, weaponType: Sword, bonusAttack: 10
+- **Armor_Leather**: Equipment, slot: Armor, armorType: Light, bonusDefense: 5
+
+#### 4.3 Skills de Teste
+```
+Assets/ScriptableObjects/Skills/
+→ Create → TOP → Skill
+```
+
+Criar skills básicas:
+- **Basic_Attack**: targetType: SingleEnemy, baseDamage: 10, mpCost: 0
+- **Thunder_Bolt**: targetType: SingleEnemy, baseDamage: 50, mpCost: 20, element: Thunder
+- **Heal**: targetType: SingleAlly, healAmount: 100, mpCost: 30
+
+---
+
+### PASSO 5: Configurar o Player Prefab
+
+#### 5.1 Criar o Prefab do Jogador
+
+1. **Criar GameObject vazio** na Hierarchy → nome: `Player`
+
+2. **Adicionar componentes (na ordem):**
+   - NavMeshAgent
+   - CharacterController
+   - NetworkIdentity
+   - NetworkTransform (ou NetworkTransformReliable)
+   - Animator
+   - AudioSource
+   - Rigidbody (isKinematic = true)
+
+3. **Adicionar scripts do Player:**
+   - PlayerStats
+   - PlayerMovement
+   - PlayerCombat
+   - PlayerAnimation
+   - PlayerEquipment
+   - PlayerSkills
+   - PlayerInventory
+   - PlayerConsumables
+   - PlayerHotbar
+   - PlayerClass
+   - PlayerRespawn
+   - BuffManager
+
+4. **Configurar NavMeshAgent:**
+   - Speed: 5
+   - Angular Speed: 360
+   - Acceleration: 15
+   - Stopping Distance: 0.1
+   - Radius: 0.3
+   - Height: 1.8
+   - Base Offset: 0
+
+5. **Configurar CharacterController:**
+   - Center: (0, 0.9, 0)
+   - Radius: 0.3
+   - Height: 1.8
+   - Step Offset: 0.3
+
+6. **Configurar NetworkIdentity:**
+   - ☑️ Local Player Authority (se usar Mirror antigo)
+   - Ou deixar padrão para Mirror novo
+
+7. **Configurar Animator:**
+   - Criar Animator Controller: `Animations/Player/PlayerAnimatorController`
+   - Parâmetros a criar:
+     - Float: MoveSpeed
+     - Bool: IsMoving
+     - Bool: IsRunning
+     - Bool: IsAttacking
+     - Bool: IsCasting
+     - Float: CastProgress
+     - Bool: IsDead
+     - Trigger: Attack
+     - Trigger: Skill
+     - Int: SkillId
+     - Trigger: Die
+     - Trigger: Revive
+     - Trigger: Hit
+     - Float: IdleVariation
+
+8. **Configurar PlayerEquipment - Bone References:**
+   - Criar bone structure no modelo FBX:
+     - `Head` → arrastar para headBone
+     - `Spine` ou `Body` → arrastar para bodyBone
+     - `RightHand` → arrastar para rightHandBone
+     - `LeftHand` → arrastar para leftHandBone
+     - `Back` → arrastar para backBone
+     - `Feet` → arrastar para feetBone
+
+9. **Criar Prefab:**
+   - Arrastar `Player` para `Prefabs/Player/`
+   - Deletar da Hierarchy
+
+---
+
+### PASSO 6: Configurar a Cena
+
+#### 6.1 Criar Terreno
+
+1. **GameObject → 3D Object → Terrain**
+2. **Paint Terrain** com texturas de grama/terra
+3. **Baking NavMesh:**
+   - Window → AI → Navigation
+   - Selecionar Terrain → Navigation Static ☑️
+   - Bake → Bake
+
+#### 6.2 Criar Spawn Points
+
+1. **GameObject → Create Empty** → nome: `SpawnPoints`
+2. **Criar filhos:** `SpawnPoint_1`, `SpawnPoint_2`, etc.
+3. Posicionar pelo mapa
+
+#### 6.3 Configurar Câmera
+
+1. **Deletar Main Camera** (será criada dinamicamente)
+2. Ou configurar CameraController no Main Camera existente
+
+#### 6.4 Configurar Light
+
+1. **Directional Light** → Rotation: (50, -30, 0)
+2. **Intensity:** 1.0
+3. **Color:** Branco quente (RGB: 255, 244, 214)
+
+---
+
+### PASSO 7: Configurar Network Manager
+
+#### 7.1 Criar Network Manager
+
+1. **GameObject → Create Empty** → nome: `NetworkManager`
+2. **Adicionar componente:** TOPNetworkManager (substitui NetworkManager padrão)
+3. **Configurar:**
+   - Player Prefab: arrastar `Prefabs/Player/Player`
+   - Auto Create Player: ☑️
+   - Player Spawn Method: Round Robin
+   - Registered Spawnable Prefabs: adicionar `WorldItem`, `SkillProjectile`
+
+#### 7.2 Configurar NetworkManager padrão (se não usar TOPNetworkManager)
+
+1. **GameObject → Mirror → NetworkManager**
+2. **Adicionar NetworkManager.cs** (padrão do Mirror)
+3. **Configurar:**
+   - Player Prefab: arrastar `Prefabs/Player/Player`
+   - Auto Create Player: ☑️
+   - Spawn Prefabs: adicionar `WorldItem`, `SkillProjectile`
+
+---
+
+### PASSO 8: Configurar Databases
+
+#### 8.1 Criar GameObject Databases
+
+1. **GameObject → Create Empty** → nome: `Databases`
+2. **Adicionar componentes:**
+   - ItemDatabase
+   - SkillDatabase
+   - QuestDatabase
+
+#### 8.2 Popular ItemDatabase
+
+1. Selecionar `Databases`
+2. No Inspector de ItemDatabase:
+   - Clicar nos campos `All Items`, `All Equipment`, `All Consumables`
+   - Arrastar os ScriptableObjects criados
+3. Ou clicar com botão direito → **Auto-Register All Items** (botão de contexto)
+
+#### 8.3 Popular SkillDatabase
+
+1. Selecionar `Databases`
+2. No Inspector de SkillDatabase:
+   - Arrastar todos os SkillData para `All Skills`
+3. Ou **Auto-Register All Skills**
+
+#### 8.4 Popular QuestDatabase
+
+1. Selecionar `Databases`
+2. Arrastar QuestData para `All Quests`
+3. Ou **Auto-Register All Quests**
+
+#### 8.5 Criar Prefab de Databases
+
+1. Arrastar `Databases` para `Prefabs/`
+2. Marcar como **DontDestroyOnLoad** (já está no script)
+
+---
+
+### PASSO 9: Configurar UI
+
+#### 9.1 Criar Canvas
+
+1. **GameObject → UI → Canvas**
+   - Render Mode: Screen Space - Overlay
+   - Canvas Scaler: Scale With Screen Size (1920x1080)
+
+#### 9.2 Criar HUD
+
+1. **Criar Painéis:**
+   - `HUD/HPBar` - Slider (verde)
+   - `HUD/MPBar` - Slider (azul)
+   - `HUD/SPBar` - Slider (amarelo)
+   - `HUD/ExpBar` - Slider (roxo)
+   - `HUD/LevelText` - TextMeshPro
+   - `HUD/NameText` - TextMeshPro
+   - `HUD/Minimap` - RawImage (Render Texture)
+
+2. **Criar Scripts UI:**
+   - `UIPlayerStats.cs` - Atualiza barras de HP/MP/SP/EXP
+   - `UIInventory.cs` - Grid de inventário (6x8)
+   - `UIEquipment.cs` - Slots de equipamento
+   - `UISkills.cs` - Árvore de skills
+   - `UIHotbar.cs` - Barra F1-F10
+   - `UIChat.cs` - Chat do jogo
+   - `UIMinimap.cs` - Minimapa
+
+#### 9.3 Exemplo: UIPlayerStats.cs
+```csharp
+using UnityEngine;
+using TMPro;
+using UnityEngine.UI;
+
+public class UIPlayerStats : MonoBehaviour
+{
+    [SerializeField] private PlayerStats playerStats;
+    
+    [Header("Bars")]
+    [SerializeField] private Slider hpBar;
+    [SerializeField] private Slider mpBar;
+    [SerializeField] private Slider spBar;
+    [SerializeField] private Slider expBar;
+    
+    [Header("Texts")]
+    [SerializeField] private TextMeshProUGUI hpText;
+    [SerializeField] private TextMeshProUGUI mpText;
+    [SerializeField] private TextMeshProUGUI spText;
+    [SerializeField] private TextMeshProUGUI expText;
+    [SerializeField] private TextMeshProUGUI levelText;
+    [SerializeField] private TextMeshProUGUI nameText;
+    
+    void Start()
+    {
+        if (playerStats == null)
+            playerStats = FindObjectOfType<PlayerStats>();
+        
+        if (playerStats != null)
+        {
+            playerStats.OnHealthUpdated += UpdateHP;
+            playerStats.OnManaUpdated += UpdateMP;
+            playerStats.OnStaminaUpdated += UpdateSP;
+            playerStats.OnLevelUp += UpdateLevel;
+        }
+    }
+    
+    void OnDestroy()
+    {
+        if (playerStats != null)
+        {
+            playerStats.OnHealthUpdated -= UpdateHP;
+            playerStats.OnManaUpdated -= UpdateMP;
+            playerStats.OnStaminaUpdated -= UpdateSP;
+            playerStats.OnLevelUp -= UpdateLevel;
+        }
+    }
+    
+    private void UpdateHP(int current, int max)
+    {
+        if (hpBar != null) hpBar.value = (float)current / max;
+        if (hpText != null) hpText.text = $"{current}/{max}";
+    }
+    
+    private void UpdateMP(int current, int max)
+    {
+        if (mpBar != null) mpBar.value = (float)current / max;
+        if (mpText != null) mpText.text = $"{current}/{max}";
+    }
+    
+    private void UpdateSP(int current, int max)
+    {
+        if (spBar != null) spBar.value = (float)current / max;
+        if (spText != null) spText.text = $"{current}/{max}";
+    }
+    
+    private void UpdateExp()
+    {
+        if (playerStats == null) return;
+        if (expBar != null) expBar.value = playerStats.GetExpPercentage();
+        if (expText != null) expText.text = $"{playerStats.Experience}/{playerStats.GetExpForNextLevel()}";
+    }
+    
+    private void UpdateLevel(int level)
+    {
+        if (levelText != null) levelText.text = $"Lv. {level}";
+        UpdateExp();
+    }
+    
+    void Update()
+    {
+        UpdateExp();
+    }
+}
+```
+
+---
+
+### PASSO 10: Configurar Cenas
+
+#### 10.1 LoginScene
+
+1. **Salvar cena atual como `Scenes/LoginScene`**
+2. **Criar UI de Login:**
+   - InputField: Username
+   - InputField: Password
+   - Button: Login
+   - Button: Register
+   - Button: Settings
+3. **Adicionar script:** `LoginManager.cs`
+
+#### 10.2 CharacterSelectScene
+
+1. **Nova cena:** `Scenes/CharacterSelect`
+2. **UI:**
+   - 3 slots de personagem
+   - Botão: Criar Personagem
+   - Botão: Deletar Personagem
+   - Botão: Jogar
+   - Preview do personagem (modelo 3D)
+3. **Adicionar script:** `CharacterSelectManager.cs`
+
+#### 10.3 GameScene
+
+1. **Salvar cena atual como `Scenes/GameScene`**
+2. **Adicionar:**
+   - Terrain com NavMesh
+   - NetworkManager
+   - Databases
+   - SpawnPoints
+   - Directional Light
+   - EventSystem
+   - Canvas (UI)
+   - Minimap Camera
+
+---
+
+### PASSO 11: Configurar Input System (Opcional)
+
+#### 11.1 Instalar New Input System
+
+1. **Package Manager** → New Input System
+2. **Reiniciar Unity** quando solicitado
+
+#### 11.2 Criar Input Actions
+
+1. **Assets/Input/PlayerInput.inputactions**
+2. **Configurar Actions:**
+   - Move: WASD / Arrow Keys
+   - Attack: Space
+   - Interact: F
+   - Inventory: I
+   - Equipment: E
+   - Skills: K
+   - Quests: Q
+   - Character: C
+   - Map: M
+   - Chat: Enter
+   - Escape: Esc
+   - SkillBar: F1-F10, 1-0
+   - Mouse: Left Click, Right Click, Middle Click
+   - Run: Left Shift
+   - AutoAttack: Left Ctrl
+
+---
+
+### PASSO 12: Testar
+
+#### 12.1 Teste em Host
+
+1. **Play**
+2. **Mirror → Network Manager → Start Host**
+3. **Verificar:**
+   - Player spawna corretamente
+   - Movimento com clique do mouse
+   - Animação de movimento
+   - Câmera segue o player
+
+#### 12.2 Teste em Cliente
+
+1. **Build → Build Settings**
+2. **Add Open Scenes**
+3. **Build And Run**
+4. **No build:** Mirror → Start Client
+5. **Conectar ao localhost**
+
+#### 12.3 Teste de Combate
+
+1. **Criar dummy inimigo:**
+   - GameObject → Cube
+   - Adicionar script: `EnemyStats.cs` (implementa ICharacterStats)
+   - Tag: "Enemy"
+   - Layer: "Enemy"
+2. **Testar ataque:**
+   - Clicar no inimigo → player se move até ele
+   - Apertar Space → ataque
+   - Verificar dano, popup, animação
+
+#### 12.4 Teste de Inventário
+
+1. **Adicionar item:**
+   - Criar WorldItem no chão
+   - Clicar para pegar
+   - Verificar no inventário (tecla I)
+2. **Equipar item:**
+   - Abrir inventário
+   - Clicar com direito → Equipar
+   - Verificar visual no player
+
+---
+
+### PASSO 13: Build Final
+
+1. **File → Build Settings**
+2. **Platform:** PC, Mac & Linux Standalone
+3. **Architecture:** x86_64
+4. **Scenes In Build:**
+   - LoginScene (0)
+   - CharacterSelect (1)
+   - GameScene (2)
+5. **Player Settings:**
+   - Company Name: TOP-Remake
+   - Product Name: Tales of Pirates Unity
+   - Icon: ícone do jogo
+   - Resolution: 1920x1080, Windowed
+6. **Build**
+
+---
+
+## 🎮 CONTROLES DO JOGO
+
+| Tecla | Ação |
+|-------|------|
+| **Mouse Esquerdo** | Mover / Interagir / Atacar |
+| **Mouse Direito** | Atacar alvo |
+| **Mouse Meio (segurar)** | Rotacionar câmera |
+| **Scroll** | Zoom da câmera |
+| **WASD** | Movimento direcional (alternativo) |
+| **Shift** | Correr |
+| **Space** | Atacar |
+| **Ctrl** | Auto-attack |
+| **F1-F10** | Skills/Itens da hotbar |
+| **1-0** | Skills/Itens da hotbar |
+| **I** | Inventário |
+| **E** | Equipamento |
+| **K** | Skills |
+| **Q** | Quests |
+| **C** | Personagem (stats) |
+| **M** | Mapa |
+| **Enter** | Chat |
+| **Esc** | Menu / Cancelar |
+
+---
+
+## 📋 CHECKLIST DE IMPLEMENTAÇÃO
+
+- [ ] Projeto Unity criado
+- [ ] Mirror instalado
+- [ ] Scripts importados
+- [ ] ScriptableObjects de classes criados
+- [ ] ScriptableObjects de itens criados
+- [ ] ScriptableObjects de skills criados
+- [ ] Player Prefab configurado
+- [ ] NavMesh baked no terreno
+- [ ] NetworkManager configurado
+- [ ] Databases populados
+- [ ] UI básica criada
+- [ ] Câmera configurada
+- [ ] Cenas criadas (Login, Select, Game)
+- [ ] Teste de movimento
+- [ ] Teste de combate
+- [ ] Teste de inventário
+- [ ] Teste de equipamento
+- [ ] Teste de skills
+- [ ] Teste multiplayer (Host + Client)
+- [ ] Build final
+
+---
+
+## 🔧 SOLUÇÃO DE PROBLEMAS
+
+### "NavMeshAgent not found"
+→ Adicionar componente NavMeshAgent no Player Prefab
+
+### "Cannot sync object not spawned by server"
+→ Certificar que NetworkServer.Spawn() foi chamado
+
+### "Animator has no controller"
+→ Arrastar Animator Controller para o campo Controller do Animator
+
+### "Mirror error: Only server can spawn"
+→ Chamar Cmd/Server methods apenas no servidor
+
+### "ItemDatabase.Instance is null"
+→ Certificar que Databases GameObject existe na cena com ItemDatabase
+
+---
+
+## 📝 PRÓXIMOS PASSOS
+
+1. **Sistema de Guilda**
+2. **Sistema de Party**
+3. **Sistema de Trade**
+4. **Sistema de Stall (Offline Shop)**
+5. **Sistema de Mount/Pet**
+6. **Sistema de Dungeon/Instance**
+7. **Sistema de PvP**
+8. **Sistema de Ranking**
+9. **Sistema de Eventos**
+10. **Sistema de Crafting**
+
+---
+
+**Criado para Unity 2022.3 LTS ou superior**
+**Mirror Networking 89.8.0 ou superior**
+**Compatível com URP e Built-in Render Pipeline**
+"""
+
+with open(os.path.join(output_dir, "README.md"), 'w', encoding='utf-8') as f:
+    f.write(readme)
+
+# Listar todos os arquivos criados
+print("=" * 60)
+print("✅ TODOS OS SCRIPTS CRIADOS COM SUCESSO!")
+print("=" * 60)
+print(f"\n📁 Diretório: {output_dir}")
+print(f"📄 Total de scripts: {len(scripts)}")
+print(f"📄 README: README.md")
+print()
+
+for folder in sorted(os.listdir(output_dir)):
+    folder_path = os.path.join(output_dir, folder)
+    if os.path.isdir(folder_path):
+        files = os.listdir(folder_path)
+        print(f"\n📂 {folder}/ ({len(files)} arquivos)")
+        for f in sorted(files):
+            print(f"   ├── {f}")
+
+print("\n" + "=" * 60)
+print("🎮 Sistema Completo Tales of Pirates para Unity 3D")
+print("=" * 60)

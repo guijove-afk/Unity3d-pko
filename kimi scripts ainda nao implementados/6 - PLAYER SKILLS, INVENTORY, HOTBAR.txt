@@ -1,0 +1,1026 @@
+
+# ============================================================
+# 6. PLAYER SKILLS, INVENTORY, HOTBAR
+# ============================================================
+
+scripts["PlayerSkills.cs"] = '''using UnityEngine;
+using Mirror;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+
+public class PlayerSkills : NetworkBehaviour
+{
+    [Header("Settings")]
+    [SerializeField] private int maxSkillBarSlots = 10;
+    [SerializeField] private float globalCooldown = 0.5f;
+    
+    [SyncVar]
+    private SyncList<LearnedSkill> learnedSkills = new SyncList<LearnedSkill>();
+    
+    [SyncVar]
+    private int availableSkillPoints;
+    
+    private SkillData[] skillBar;
+    private Dictionary<string, float> cooldowns = new Dictionary<string, float>();
+    private Dictionary<string, int> skillLevels = new Dictionary<string, int>();
+    
+    private PlayerStats stats;
+    private PlayerMovement movement;
+    private PlayerCombat combat;
+    private PlayerAnimation anim;
+    
+    private float lastGlobalCooldown;
+    private bool isCasting;
+    private SkillData currentCastingSkill;
+    private Coroutine castingCoroutine;
+    
+    // Events
+    public event Action<SkillData> OnSkillLearned;
+    public event Action<SkillData> OnSkillUsed;
+    public event Action<SkillData, float> OnSkillCastStarted;
+    public event Action OnSkillCastFinished;
+    public event Action<SkillData> OnSkillExecuted;
+    public event Action<int> OnSkillPointsChanged;
+    public event Action<string, float> OnCooldownStarted;
+    public event Action<string> OnCooldownFinished;
+    
+    public bool IsCasting => isCasting;
+    public int AvailableSkillPoints => availableSkillPoints;
+    public IReadOnlyList<LearnedSkill> LearnedSkills => learnedSkills;
+    
+    void Awake()
+    {
+        stats = GetComponent<PlayerStats>();
+        movement = GetComponent<PlayerMovement>();
+        combat = GetComponent<PlayerCombat>();
+        anim = GetComponent<PlayerAnimation>();
+        
+        skillBar = new SkillData[maxSkillBarSlots];
+    }
+    
+    void Start()
+    {
+        if (!isLocalPlayer)
+        {
+            enabled = false;
+            return;
+        }
+    }
+    
+    void Update()
+    {
+        if (!isLocalPlayer) return;
+        
+        HandleInput();
+        UpdateCooldowns();
+    }
+    
+    #region Input
+    private void HandleInput()
+    {
+        // F1-F10
+        for (int i = 0; i < maxSkillBarSlots && i < 10; i++)
+        {
+            if (Input.GetKeyDown(KeyCode.F1 + i))
+            {
+                TryUseSkill(skillBar[i]);
+            }
+        }
+        
+        // Teclas numéricas 1-0
+        for (int i = 0; i < maxSkillBarSlots && i < 10; i++)
+        {
+            KeyCode key = i == 9 ? KeyCode.Alpha0 : KeyCode.Alpha1 + i;
+            if (Input.GetKeyDown(key))
+            {
+                TryUseSkill(skillBar[i]);
+            }
+        }
+    }
+    #endregion
+    
+    #region Skill Usage
+    public bool TryUseSkill(SkillData skill)
+    {
+        if (skill == null) return false;
+        if (isCasting) return false;
+        if (!CanUseSkill(skill)) return false;
+        
+        // Verifica target
+        if (skill.requiresTarget)
+        {
+            if (combat.CurrentTarget == null && skill.targetType != SkillTargetType.Self)
+            {
+                // Mostra mensagem "Selecione um alvo"
+                return false;
+            }
+        }
+        
+        // Verifica range
+        if (skill.range > 0 && combat.CurrentTarget != null && skill.targetType != SkillTargetType.Self)
+        {
+            float distance = Vector3.Distance(transform.position, combat.CurrentTarget.position);
+            if (distance > skill.range)
+            {
+                // Move até o range
+                movement.FollowTarget(combat.CurrentTarget, skill.range * 0.9f, 
+                    () => ExecuteSkill(skill));
+                return true;
+            }
+        }
+        
+        ExecuteSkill(skill);
+        return true;
+    }
+    
+    private void ExecuteSkill(SkillData skill)
+    {
+        // Cast time
+        if (skill.castTime > 0)
+        {
+            StartCasting(skill);
+            return;
+        }
+        
+        // Skill instantânea
+        UseSkillImmediate(skill);
+    }
+    
+    private void StartCasting(SkillData skill)
+    {
+        if (castingCoroutine != null)
+            StopCoroutine(castingCoroutine);
+        
+        isCasting = true;
+        currentCastingSkill = skill;
+        
+        if (!skill.canMoveWhileCasting)
+            movement.SetMovementEnabled(false);
+        
+        OnSkillCastStarted?.Invoke(skill, skill.castTime);
+        castingCoroutine = StartCoroutine(CastingSequence(skill));
+    }
+    
+    private IEnumerator CastingSequence(SkillData skill)
+    {
+        float elapsed = 0;
+        
+        // VFX de casting
+        if (skill.castEffect != null)
+        {
+            ParticleSystem castVFX = Instantiate(skill.castEffect, transform.position + Vector3.up, Quaternion.identity);
+            castVFX.transform.SetParent(transform);
+            Destroy(castVFX.gameObject, skill.castTime);
+        }
+        
+        // Som de casting
+        if (skill.castSound != null && TryGetComponent(out AudioSource audio))
+            audio.PlayOneShot(skill.castSound);
+        
+        while (elapsed < skill.castTime)
+        {
+            elapsed += Time.deltaTime;
+            
+            // Verifica interrupção
+            if (skill.canBeInterrupted && stats.IsDead)
+            {
+                InterruptCast();
+                yield break;
+            }
+            
+            yield return null;
+        }
+        
+        UseSkillImmediate(skill);
+    }
+    
+    public void InterruptCast()
+    {
+        if (!isCasting) return;
+        
+        if (castingCoroutine != null)
+            StopCoroutine(castingCoroutine);
+        
+        isCasting = false;
+        currentCastingSkill = null;
+        movement.SetMovementEnabled(true);
+        
+        OnSkillCastFinished?.Invoke();
+        
+        // Feedback de interrupção
+        DamagePopupManager.Instance?.ShowText(transform.position + Vector3.up * 2f, "Cast Interrompido!", Color.red);
+    }
+    
+    private void UseSkillImmediate(SkillData skill)
+    {
+        isCasting = false;
+        currentCastingSkill = null;
+        movement.SetMovementEnabled(true);
+        OnSkillCastFinished?.Invoke();
+        
+        // Consome recursos
+        CmdUseSkill(skill.skillId, combat.CurrentTarget?.GetComponent<NetworkIdentity>());
+    }
+    
+    [Command]
+    private void CmdUseSkill(string skillId, NetworkIdentity target)
+    {
+        SkillData skill = SkillDatabase.Instance?.GetSkill(skillId);
+        if (skill == null) return;
+        
+        // Verifica novamente no servidor
+        if (!CanUseSkill(skill)) return;
+        
+        int skillLevel = GetSkillLevel(skillId);
+        
+        // Consome MP/SP/HP
+        int mpCost = Mathf.RoundToInt(skill.mpCost * Mathf.Pow(skill.mpCostPerLevel, skillLevel - 1));
+        int spCost = skill.spCost;
+        int hpCost = skill.hpCost;
+        
+        if (stats.Mana < mpCost || stats.Stamina < spCost || stats.Health <= hpCost)
+            return;
+        
+        stats.RestoreMana(-mpCost);
+        stats.RestoreStamina(-spCost);
+        if (hpCost > 0)
+            stats.TakeTrueDamage(hpCost, netId);
+        
+        // Aplica efeito
+        ApplySkillEffect(skill, target?.GetComponent<ICharacterStats>(), skillLevel);
+        
+        // Aplica cooldown
+        float cooldown = skill.cooldown * Mathf.Pow(skill.cooldownPerLevel, skillLevel - 1);
+        cooldowns[skillId] = Time.time + cooldown;
+        
+        lastGlobalCooldown = Time.time + globalCooldown;
+        
+        RpcSkillUsed(skillId, target?.netId ?? 0);
+    }
+    
+    [Server]
+    private void ApplySkillEffect(SkillData skill, ICharacterStats target, int skillLevel)
+    {
+        int damage = Mathf.RoundToInt(skill.baseDamage * Mathf.Pow(skill.damagePerLevel, skillLevel - 1));
+        
+        switch (skill.targetType)
+        {
+            case SkillTargetType.Self:
+                ApplySkillToTarget(skill, stats, damage);
+                break;
+                
+            case SkillTargetType.SingleEnemy:
+            case SkillTargetType.SingleAlly:
+                if (target != null)
+                    ApplySkillToTarget(skill, target, damage);
+                break;
+                
+            case SkillTargetType.AreaEnemy:
+            case SkillTargetType.AreaAlly:
+            case SkillTargetType.AreaAll:
+                ApplyAreaEffect(skill, damage);
+                break;
+                
+            case SkillTargetType.Line:
+                ApplyLineEffect(skill, damage);
+                break;
+                
+            case SkillTargetType.Cone:
+                ApplyConeEffect(skill, damage);
+                break;
+        }
+    }
+    
+    [Server]
+    private void ApplySkillToTarget(SkillData skill, ICharacterStats target, int damage)
+    {
+        if (target == null) return;
+        
+        // Dano
+        if (damage > 0)
+        {
+            DamageType dmgType = skill.element != SkillElement.None ? 
+                (DamageType)Enum.Parse(typeof(DamageType), skill.element.ToString()) : DamageType.Physical;
+            
+            target.TakeDamage(damage, netId, dmgType);
+        }
+        
+        // Cura
+        if (skill.healAmount > 0)
+        {
+            int heal = Mathf.RoundToInt(skill.healAmount * skill.healMultiplier);
+            if (target is PlayerStats playerStats)
+                playerStats.Heal(heal);
+        }
+        
+        // Buffs
+        foreach (var buff in skill.appliedBuffs)
+        {
+            // Aplica buff
+        }
+        
+        // Debuffs
+        foreach (var debuff in skill.appliedDebuffs)
+        {
+            // Aplica debuff
+        }
+    }
+    
+    [Server]
+    private void ApplyAreaEffect(SkillData skill, int damage)
+    {
+        Collider[] hits = Physics.OverlapSphere(transform.position, skill.areaRadius);
+        int targetsHit = 0;
+        
+        foreach (var hit in hits)
+        {
+            if (targetsHit >= skill.maxTargets) break;
+            
+            ICharacterStats charStats = hit.GetComponent<ICharacterStats>();
+            if (charStats == null || charStats == this.stats) continue;
+            
+            // Verifica se é aliado ou inimigo baseado no targetType
+            bool isEnemy = hit.GetComponent<NetworkIdentity>()?.netId != netId;
+            
+            if (skill.targetType == SkillTargetType.AreaEnemy && !isEnemy) continue;
+            if (skill.targetType == SkillTargetType.AreaAlly && isEnemy) continue;
+            
+            ApplySkillToTarget(skill, charStats, damage);
+            targetsHit++;
+        }
+    }
+    
+    [Server]
+    private void ApplyLineEffect(SkillData skill, int damage)
+    {
+        // Raycast em linha reta
+        if (Physics.Raycast(transform.position, transform.forward, out RaycastHit hit, skill.range))
+        {
+            ICharacterStats charStats = hit.collider.GetComponent<ICharacterStats>();
+            if (charStats != null)
+                ApplySkillToTarget(skill, charStats, damage);
+        }
+    }
+    
+    [Server]
+    private void ApplyConeEffect(SkillData skill, int damage)
+    {
+        Collider[] hits = Physics.OverlapSphere(transform.position, skill.range);
+        foreach (var hit in hits)
+        {
+            ICharacterStats charStats = hit.GetComponent<ICharacterStats>();
+            if (charStats == null || charStats == this.stats) continue;
+            
+            Vector3 dirToTarget = (hit.transform.position - transform.position).normalized;
+            float angle = Vector3.Angle(transform.forward, dirToTarget);
+            
+            if (angle <= skill.coneAngle / 2f)
+            {
+                ApplySkillToTarget(skill, charStats, damage);
+            }
+        }
+    }
+    #endregion
+    
+    #region Learning
+    [Server]
+    public bool LearnSkill(string skillId)
+    {
+        SkillData skill = SkillDatabase.Instance?.GetSkill(skillId);
+        if (skill == null) return false;
+        if (HasLearnedSkill(skillId)) return false;
+        if (stats.Level < skill.requiredLevel) return false;
+        if (skill.requiredClass != CharacterClass.None && skill.requiredClass != stats.CharacterClass) return false;
+        if (availableSkillPoints < skill.requiredSkillPoints) return false;
+        
+        // Verifica pré-requisitos
+        foreach (string prereq in skill.prerequisiteSkills)
+        {
+            if (!HasLearnedSkill(prereq)) return false;
+        }
+        
+        availableSkillPoints -= skill.requiredSkillPoints;
+        
+        learnedSkills.Add(new LearnedSkill
+        {
+            skillId = skillId,
+            level = 1,
+            experience = 0
+        });
+        
+        skillLevels[skillId] = 1;
+        
+        OnSkillLearned?.Invoke(skill);
+        OnSkillPointsChanged?.Invoke(availableSkillPoints);
+        
+        return true;
+    }
+    
+    [Server]
+    public bool UpgradeSkill(string skillId)
+    {
+        SkillData skill = SkillDatabase.Instance?.GetSkill(skillId);
+        if (skill == null) return false;
+        
+        int currentLevel = GetSkillLevel(skillId);
+        if (currentLevel >= skill.maxLevel) return false;
+        if (availableSkillPoints < 1) return false;
+        
+        availableSkillPoints--;
+        
+        // Atualiza level
+        for (int i = 0; i < learnedSkills.Count; i++)
+        {
+            if (learnedSkills[i].skillId == skillId)
+            {
+                var learned = learnedSkills[i];
+                learned.level++;
+                learnedSkills[i] = learned;
+                skillLevels[skillId] = learned.level;
+                break;
+            }
+        }
+        
+        OnSkillPointsChanged?.Invoke(availableSkillPoints);
+        return true;
+    }
+    #endregion
+    
+    #region Cooldowns
+    private void UpdateCooldowns()
+    {
+        List<string> finished = new List<string>();
+        
+        foreach (var kvp in cooldowns)
+        {
+            if (Time.time >= kvp.Value)
+            {
+                finished.Add(kvp.Key);
+            }
+        }
+        
+        foreach (var skillId in finished)
+        {
+            cooldowns.Remove(skillId);
+            OnCooldownFinished?.Invoke(skillId);
+        }
+    }
+    
+    public float GetCooldownRemaining(string skillId)
+    {
+        if (cooldowns.TryGetValue(skillId, out float endTime))
+            return Mathf.Max(0, endTime - Time.time);
+        return 0;
+    }
+    
+    public bool IsOnCooldown(string skillId)
+    {
+        return GetCooldownRemaining(skillId) > 0;
+    }
+    
+    public bool IsOnGlobalCooldown()
+    {
+        return Time.time < lastGlobalCooldown;
+    }
+    #endregion
+    
+    #region Queries
+    public bool CanUseSkill(SkillData skill)
+    {
+        if (skill == null) return false;
+        if (stats.IsDead) return false;
+        if (stats.Level < skill.requiredLevel) return false;
+        if (!HasLearnedSkill(skill.skillId) && skill.skillType != SkillType.Passive) return false;
+        if (IsOnCooldown(skill.skillId)) return false;
+        if (IsOnGlobalCooldown()) return false;
+        if (isCasting) return false;
+        
+        int mpCost = Mathf.RoundToInt(skill.mpCost * Mathf.Pow(skill.mpCostPerLevel, GetSkillLevel(skill.skillId) - 1));
+        if (stats.Mana < mpCost) return false;
+        if (stats.Stamina < skill.spCost) return false;
+        if (stats.Health <= skill.hpCost) return false;
+        
+        return true;
+    }
+    
+    public bool HasLearnedSkill(string skillId)
+    {
+        foreach (var learned in learnedSkills)
+        {
+            if (learned.skillId == skillId) return true;
+        }
+        return false;
+    }
+    
+    public int GetSkillLevel(string skillId)
+    {
+        if (skillLevels.TryGetValue(skillId, out int level))
+            return level;
+        return 0;
+    }
+    #endregion
+    
+    #region Skill Bar
+    public void AssignSkillToBar(SkillData skill, int slot)
+    {
+        if (slot < 0 || slot >= maxSkillBarSlots) return;
+        skillBar[slot] = skill;
+    }
+    
+    public SkillData GetSkillFromBar(int slot)
+    {
+        if (slot < 0 || slot >= maxSkillBarSlots) return null;
+        return skillBar[slot];
+    }
+    #endregion
+    
+    #region RPCs
+    [ClientRpc]
+    private void RpcSkillUsed(string skillId, uint targetNetId)
+    {
+        SkillData skill = SkillDatabase.Instance?.GetSkill(skillId);
+        if (skill == null) return;
+        
+        OnSkillUsed?.Invoke(skill);
+        OnSkillExecuted?.Invoke(skill);
+        
+        // VFX
+        if (skill.executeEffect != null)
+        {
+            Vector3 spawnPos = transform.position + transform.forward + Vector3.up;
+            Instantiate(skill.executeEffect, spawnPos, transform.rotation);
+        }
+        
+        // Som
+        if (skill.executeSound != null && TryGetComponent(out AudioSource audio))
+            audio.PlayOneShot(skill.executeSound);
+        
+        // Projétil
+        if (skill.isProjectile && skill.projectilePrefab != null)
+        {
+            SpawnProjectile(skill, targetNetId);
+        }
+    }
+    
+    private void SpawnProjectile(SkillData skill, uint targetNetId)
+    {
+        GameObject projectile = Instantiate(skill.projectilePrefab, 
+            transform.position + Vector3.up + transform.forward, transform.rotation);
+        
+        if (projectile.TryGetComponent<SkillProjectile>(out var proj))
+        {
+            proj.Initialize(skill, netId, targetNetId, skill.projectileSpeed, skill.projectileHoming);
+        }
+    }
+    #endregion
+}
+
+[System.Serializable]
+public struct LearnedSkill : Mirror.NetworkMessage
+{
+    public string skillId;
+    public int level;
+    public int experience;
+}
+'''
+
+scripts["PlayerInventory.cs"] = '''using UnityEngine;
+using Mirror;
+using System;
+using System.Collections.Generic;
+
+public class PlayerInventory : NetworkBehaviour
+{
+    [Header("Settings")]
+    [SerializeField] private int inventoryWidth = 6;
+    [SerializeField] private int inventoryHeight = 8;
+    [SerializeField] private int maxGold = 999999999;
+    
+    [SyncVar]
+    private SyncList<InventorySlot> inventorySlots = new SyncList<InventorySlot>();
+    
+    private PlayerStats stats;
+    private PlayerEquipment equipment;
+    
+    // Events
+    public event Action<int, InventorySlot> OnSlotChanged;
+    public event Action<ItemData, int> OnItemAdded;
+    public event Action<ItemData, int> OnItemRemoved;
+    public event Action<int> OnGoldChanged;
+    
+    public int InventoryWidth => inventoryWidth;
+    public int InventoryHeight => inventoryHeight;
+    public int TotalSlots => inventoryWidth * inventoryHeight;
+    public int UsedSlots { get; private set; }
+    public int FreeSlots => TotalSlots - UsedSlots;
+    
+    void Awake()
+    {
+        stats = GetComponent<PlayerStats>();
+        equipment = GetComponent<PlayerEquipment>();
+        
+        inventorySlots.Callback += OnInventoryChanged;
+    }
+    
+    void Start()
+    {
+        // Inicializa slots vazios
+        if (isServer)
+        {
+            while (inventorySlots.Count < TotalSlots)
+            {
+                inventorySlots.Add(new InventorySlot());
+            }
+        }
+    }
+    
+    #region Add/Remove Items
+    [Server]
+    public bool AddItem(string itemId, int quantity = 1)
+    {
+        ItemData item = ItemDatabase.Instance?.GetItem(itemId);
+        if (item == null) return false;
+        if (quantity <= 0) return false;
+        
+        int remaining = quantity;
+        
+        // Tenta stackar primeiro
+        if (item.maxStack > 1)
+        {
+            for (int i = 0; i < inventorySlots.Count && remaining > 0; i++)
+            {
+                if (inventorySlots[i].itemId == itemId && inventorySlots[i].quantity < item.maxStack)
+                {
+                    int canAdd = Mathf.Min(remaining, item.maxStack - inventorySlots[i].quantity);
+                    var slot = inventorySlots[i];
+                    slot.quantity += canAdd;
+                    inventorySlots[i] = slot;
+                    remaining -= canAdd;
+                }
+            }
+        }
+        
+        // Preenche slots vazios
+        for (int i = 0; i < inventorySlots.Count && remaining > 0; i++)
+        {
+            if (string.IsNullOrEmpty(inventorySlots[i].itemId))
+            {
+                int canAdd = Mathf.Min(remaining, item.maxStack);
+                inventorySlots[i] = new InventorySlot
+                {
+                    itemId = itemId,
+                    quantity = canAdd,
+                    durability = item is EquipmentData equip ? equip.durability : 100
+                };
+                remaining -= canAdd;
+            }
+        }
+        
+        if (remaining < quantity)
+        {
+            OnItemAdded?.Invoke(item, quantity - remaining);
+            UpdateUsedSlots();
+            return remaining == 0;
+        }
+        
+        return false; // Inventário cheio
+    }
+    
+    [Server]
+    public bool RemoveItem(string itemId, int quantity = 1)
+    {
+        if (quantity <= 0) return false;
+        
+        int remaining = quantity;
+        
+        for (int i = inventorySlots.Count - 1; i >= 0 && remaining > 0; i--)
+        {
+            if (inventorySlots[i].itemId == itemId)
+            {
+                int canRemove = Mathf.Min(remaining, inventorySlots[i].quantity);
+                var slot = inventorySlots[i];
+                slot.quantity -= canRemove;
+                remaining -= canRemove;
+                
+                if (slot.quantity <= 0)
+                {
+                    slot = new InventorySlot();
+                }
+                
+                inventorySlots[i] = slot;
+            }
+        }
+        
+        if (remaining < quantity)
+        {
+            ItemData item = ItemDatabase.Instance?.GetItem(itemId);
+            if (item != null)
+                OnItemRemoved?.Invoke(item, quantity - remaining);
+            
+            UpdateUsedSlots();
+            return remaining == 0;
+        }
+        
+        return false;
+    }
+    
+    [Server]
+    public bool RemoveItemAt(int slotIndex, int quantity = 1)
+    {
+        if (slotIndex < 0 || slotIndex >= inventorySlots.Count) return false;
+        if (string.IsNullOrEmpty(inventorySlots[slotIndex].itemId)) return false;
+        
+        var slot = inventorySlots[slotIndex];
+        string itemId = slot.itemId;
+        
+        if (slot.quantity <= quantity)
+        {
+            inventorySlots[slotIndex] = new InventorySlot();
+        }
+        else
+        {
+            slot.quantity -= quantity;
+            inventorySlots[slotIndex] = slot;
+        }
+        
+        ItemData item = ItemDatabase.Instance?.GetItem(itemId);
+        if (item != null)
+            OnItemRemoved?.Invoke(item, quantity);
+        
+        UpdateUsedSlots();
+        return true;
+    }
+    #endregion
+    
+    #region Move/Swap
+    [Command]
+    public void CmdMoveItem(int fromSlot, int toSlot)
+    {
+        if (fromSlot < 0 || fromSlot >= inventorySlots.Count) return;
+        if (toSlot < 0 || toSlot >= inventorySlots.Count) return;
+        if (fromSlot == toSlot) return;
+        
+        var from = inventorySlots[fromSlot];
+        var to = inventorySlots[toSlot];
+        
+        // Stack se for o mesmo item
+        if (from.itemId == to.itemId && !string.IsNullOrEmpty(from.itemId))
+        {
+            ItemData item = ItemDatabase.Instance?.GetItem(from.itemId);
+            if (item != null && item.maxStack > 1)
+            {
+                int canStack = Mathf.Min(from.quantity, item.maxStack - to.quantity);
+                if (canStack > 0)
+                {
+                    to.quantity += canStack;
+                    from.quantity -= canStack;
+                    
+                    if (from.quantity <= 0)
+                        from = new InventorySlot();
+                    
+                    inventorySlots[fromSlot] = from;
+                    inventorySlots[toSlot] = to;
+                    return;
+                }
+            }
+        }
+        
+        // Swap
+        inventorySlots[fromSlot] = to;
+        inventorySlots[toSlot] = from;
+    }
+    
+    [Command]
+    public void CmdSplitItem(int slotIndex, int amount)
+    {
+        if (slotIndex < 0 || slotIndex >= inventorySlots.Count) return;
+        
+        var slot = inventorySlots[slotIndex];
+        if (string.IsNullOrEmpty(slot.itemId)) return;
+        if (slot.quantity <= amount) return;
+        
+        // Encontra slot vazio
+        for (int i = 0; i < inventorySlots.Count; i++)
+        {
+            if (string.IsNullOrEmpty(inventorySlots[i].itemId))
+            {
+                inventorySlots[i] = new InventorySlot
+                {
+                    itemId = slot.itemId,
+                    quantity = amount,
+                    durability = slot.durability
+                };
+                
+                slot.quantity -= amount;
+                inventorySlots[slotIndex] = slot;
+                return;
+            }
+        }
+    }
+    #endregion
+    
+    #region Use/Equip
+    [Command]
+    public void CmdUseItem(int slotIndex)
+    {
+        if (slotIndex < 0 || slotIndex >= inventorySlots.Count) return;
+        
+        var slot = inventorySlots[slotIndex];
+        if (string.IsNullOrEmpty(slot.itemId)) return;
+        
+        ItemData item = ItemDatabase.Instance?.GetItem(slot.itemId);
+        if (item == null) return;
+        
+        if (item is ConsumableData consumable)
+        {
+            UseConsumable(consumable, slotIndex);
+        }
+        else if (item is EquipmentData equipment)
+        {
+            EquipItem(equipment, slotIndex);
+        }
+    }
+    
+    [Server]
+    private void UseConsumable(ConsumableData consumable, int slotIndex)
+    {
+        // Verifica requisitos
+        if (stats.Level < consumable.requiredLevel) return;
+        
+        // Aplica efeitos
+        if (consumable.restoreHP > 0)
+            stats.Heal(consumable.restoreHP);
+        if (consumable.restoreHPPercent > 0)
+            stats.Heal(Mathf.RoundToInt(stats.MaxHealth * consumable.restoreHPPercent / 100f));
+        
+        if (consumable.restoreMP > 0)
+            stats.RestoreMana(consumable.restoreMP);
+        if (consumable.restoreMPPercent > 0)
+            stats.RestoreMana(Mathf.RoundToInt(stats.MaxMana * consumable.restoreMPPercent / 100f));
+        
+        // Buffs
+        foreach (var buff in consumable.buffs)
+        {
+            // Aplica buff
+        }
+        
+        // Consome item
+        RemoveItemAt(slotIndex, 1);
+        
+        // VFX/SFX
+        RpcItemUsed(consumable.itemId);
+    }
+    
+    [Server]
+    private void EquipItem(EquipmentData equipmentData, int slotIndex)
+    {
+        if (equipment == null) return;
+        
+        if (equipment.EquipItem(equipmentData.itemId))
+        {
+            RemoveItemAt(slotIndex, 1);
+        }
+    }
+    
+    [Command]
+    public void CmdUnequipItem(EquipmentSlot slot)
+    {
+        if (equipment == null) return;
+        
+        EquipmentData item = equipment.GetEquippedItem(slot);
+        if (item == null) return;
+        
+        // Adiciona ao inventário
+        if (AddItem(item.itemId))
+        {
+            equipment.UnequipItem(slot);
+        }
+    }
+    #endregion
+    
+    #region Drop/Trade
+    [Command]
+    public void CmdDropItem(int slotIndex, int quantity)
+    {
+        if (slotIndex < 0 || slotIndex >= inventorySlots.Count) return;
+        
+        var slot = inventorySlots[slotIndex];
+        if (string.IsNullOrEmpty(slot.itemId)) return;
+        
+        ItemData item = ItemDatabase.Instance?.GetItem(slot.itemId);
+        if (item == null || !item.isDroppable) return;
+        
+        quantity = Mathf.Min(quantity, slot.quantity);
+        
+        // Spawna item no mundo
+        SpawnWorldItem(item, quantity, transform.position + transform.forward);
+        
+        RemoveItemAt(slotIndex, quantity);
+    }
+    
+    [Server]
+    private void SpawnWorldItem(ItemData item, int quantity, Vector3 position)
+    {
+        GameObject worldItemObj = new GameObject($"WorldItem_{item.itemName}");
+        worldItemObj.transform.position = position;
+        
+        WorldItem worldItem = worldItemObj.AddComponent<WorldItem>();
+        worldItem.Initialize(item, quantity);
+    }
+    #endregion
+    
+    #region Queries
+    public InventorySlot GetSlot(int index)
+    {
+        if (index < 0 || index >= inventorySlots.Count)
+            return new InventorySlot();
+        return inventorySlots[index];
+    }
+    
+    public int GetItemQuantity(string itemId)
+    {
+        int total = 0;
+        foreach (var slot in inventorySlots)
+        {
+            if (slot.itemId == itemId)
+                total += slot.quantity;
+        }
+        return total;
+    }
+    
+    public bool HasItem(string itemId, int quantity = 1)
+    {
+        return GetItemQuantity(itemId) >= quantity;
+    }
+    
+    public int FindItemSlot(string itemId)
+    {
+        for (int i = 0; i < inventorySlots.Count; i++)
+        {
+            if (inventorySlots[i].itemId == itemId)
+                return i;
+        }
+        return -1;
+    }
+    
+    public int FindEmptySlot()
+    {
+        for (int i = 0; i < inventorySlots.Count; i++)
+        {
+            if (string.IsNullOrEmpty(inventorySlots[i].itemId))
+                return i;
+        }
+        return -1;
+    }
+    #endregion
+    
+    #region Callbacks
+    private void OnInventoryChanged(SyncList<InventorySlot>.Operation op, int index,
+        InventorySlot oldItem, InventorySlot newItem)
+    {
+        OnSlotChanged?.Invoke(index, newItem);
+    }
+    
+    private void UpdateUsedSlots()
+    {
+        UsedSlots = 0;
+        foreach (var slot in inventorySlots)
+        {
+            if (!string.IsNullOrEmpty(slot.itemId))
+                UsedSlots++;
+        }
+    }
+    #endregion
+    
+    #region RPCs
+    [ClientRpc]
+    private void RpcItemUsed(string itemId)
+    {
+        ItemData item = ItemDatabase.Instance?.GetItem(itemId);
+        if (item is ConsumableData consumable)
+        {
+            if (consumable.useEffect != null)
+            {
+                Instantiate(consumable.useEffect, transform.position + Vector3.up, Quaternion.identity);
+            }
+            if (consumable.useSound != null && TryGetComponent(out AudioSource audio))
+                audio.PlayOneShot(consumable.useSound);
+        }
+    }
+    #endregion
+}
+
+[System.Serializable]
+public struct InventorySlot : Mirror.NetworkMessage
+{
+    public string itemId;
+    public int quantity;
+    public int durability;
+    public int refineLevel;
+    public string[] gemSlots;
+}
+'''
+
+print("Skills e Inventory criados!")
+print(f"Total acumulado: {len(scripts)} scripts")
