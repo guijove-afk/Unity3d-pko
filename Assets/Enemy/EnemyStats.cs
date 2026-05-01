@@ -1,167 +1,322 @@
 using UnityEngine;
 using Mirror;
+using System;
 
+[RequireComponent(typeof(Animator))]
+[RequireComponent(typeof(CharacterController))]
 public class EnemyStats : NetworkBehaviour, ICharacterStats
 {
-    [Header("Basic Stats")]
-    [SyncVar] public string enemyName = "Monster";
-    [SyncVar] public int level = 1;
+    #region SyncVars
+    [SyncVar(hook = nameof(OnHealthChanged))] private int _health;
+    [SyncVar] private int _maxHealth;
+    [SyncVar] private int _mana;
+    [SyncVar] private int _maxMana;
     
-    [Header("Health")]
-    [SyncVar(hook = nameof(OnHealthChanged))] 
-    private int _health;
+    [SyncVar] private int _level = 1;
+    [SyncVar] private string _enemyName = "Monster";
+    [SyncVar] private bool _isDead = false;
     
-    [SyncVar] 
-    private int _maxHealth = 100;
+    [SyncVar] private int _attack;
+    [SyncVar] private int _defense;
+    [SyncVar] private int _magicAttack;
+    [SyncVar] private int _magicDefense;
+    [SyncVar] private float _attackSpeed = 1f;
+    [SyncVar] private float _moveSpeed = 3f;
+    [SyncVar] private int _attackRange = 2;
     
-    [Header("Combat")]
-    [SyncVar] public int attack = 10;
-    [SyncVar] public int defense = 5;
-    [SyncVar] public float attackSpeed = 1f;
-    [SyncVar] public float moveSpeed = 3f;
-    [SyncVar] public float attackRange = 2f;
-    
-    [Header("Rewards")]
-    public int expReward = 50;
-    public int goldReward = 20;
-    
-    [Header("Visual")]
-    public GameObject selectionIndicator;
-    public Transform hitEffectSpawnPoint;
-    
-    // Interface ICharacterStats
+    [SyncVar] private uint _currentAggroTarget;
+    #endregion
+
+    #region Properties
     public int Health => _health;
     public int MaxHealth => _maxHealth;
-    public bool IsDead => _health <= 0;
+    public int Mana => _mana;
+    public int MaxMana => _maxMana;
+    public int Level => _level;
+    public string EnemyName => _enemyName;
+    public bool IsDead => _isDead;
     
-    // Events
-    public event System.Action OnDeath;
-    public event System.Action<int, int> OnHealthUpdated;
+    public int Attack => _attack;
+    public int Defense => _defense;
+    public int MagicAttack => _magicAttack;
+    public int MagicDefense => _magicDefense;
+    public float AttackSpeed => _attackSpeed;
+    public float MoveSpeed => _moveSpeed;
+    public int AttackRange => _attackRange;
     
+    public uint CurrentAggroTarget => _currentAggroTarget;
+    public bool HasAggro => _currentAggroTarget != 0;
+    
+    // ✅ PROPRIEDADE PÚBLICA para acesso controlado ao enemyData
+    public EnemyData EnemyData => enemyData;
+    #endregion
+
+    #region Events
+    public event Action OnHealthUpdated;
+    public event Action OnDeath;
+    public event Action OnAggroChanged;
+    #endregion
+
+    [Header("Configurações")]
+    [SerializeField] private EnemyData enemyData;  // ✅ Privado, acesso via propriedade
+    [SerializeField] private float aggroRange = 8f;
+    [SerializeField] private float loseAggroRange = 15f;
+    [SerializeField] private float attackCooldown = 1.5f;
+    [SerializeField] private float wanderRadius = 5f;
+    [SerializeField] private float wanderInterval = 5f;
+
+    private Animator anim;
+    private float lastAttackTime;
+
+    void Awake()
+    {
+        anim = GetComponent<Animator>();
+    }
+
     void Start()
     {
         if (isServer)
         {
-            _health = _maxHealth;
+            _currentAggroTarget = 0; // Garante estado inicial limpo
+            InitializeFromData();
         }
-        
-        if (selectionIndicator != null)
-            selectionIndicator.SetActive(false);
     }
-    
+
     [Server]
-    public void Initialize(int enemyLevel)
+    private void InitializeFromData()
     {
-        level = enemyLevel;
-        _maxHealth = 100 + (level * 20);
-        attack = 10 + (level * 3);
-        defense = 5 + (level * 2);
+        if (enemyData == null)
+        {
+            Debug.LogWarning($"[{nameof(EnemyStats)}] enemyData não atribuído!", this);
+            return;
+        }
+
+        _enemyName = enemyData.enemyName;
+        _level = enemyData.level;
+        _maxHealth = enemyData.baseHealth;
         _health = _maxHealth;
+        _maxMana = enemyData.baseMana;
+        _mana = _maxMana;
+        _attack = enemyData.baseAttack;
+        _defense = enemyData.baseDefense;
+        _magicAttack = enemyData.baseMagicAttack;
+        _magicDefense = enemyData.baseMagicDefense;
+        _attackSpeed = enemyData.attackSpeed;
+        _moveSpeed = enemyData.moveSpeed;
+        _attackRange = enemyData.attackRange;
     }
-    
+
+    #region Damage & Death
     [Server]
     public void TakeDamage(int damage, uint attackerId, DamageType damageType = DamageType.Physical)
     {
-        if (IsDead) return;
-        
-        int finalDamage = Mathf.Max(1, damage - defense);
+        if (_isDead) return;
+
+        int finalDamage = damage;
+
+        if (damageType == DamageType.Physical)
+            finalDamage = Mathf.Max(1, damage - Defense);
+        else if (damageType == DamageType.Magical)
+            finalDamage = Mathf.Max(1, damage - MagicDefense);
+
         _health = Mathf.Max(0, _health - finalDamage);
-        
+
+        if (!HasAggro)
+        {
+            SetAggroTarget(attackerId);
+        }
+
         RpcOnDamageTaken(finalDamage);
-        
+
         if (_health <= 0)
         {
             Die(attackerId);
         }
     }
-    
+
     [Server]
     public void TakeTrueDamage(int damage, uint attackerId)
     {
-        if (IsDead) return;
+        if (_isDead) return;
         _health = Mathf.Max(0, _health - damage);
         RpcOnDamageTaken(damage);
         if (_health <= 0) Die(attackerId);
     }
-    
+
+    [Server]
+    public void Heal(int amount)
+    {
+        if (_isDead) return;
+        _health = Mathf.Min(_maxHealth, _health + amount);
+        OnHealthUpdated?.Invoke();
+    }
+
     [Server]
     private void Die(uint killerId)
     {
+        _isDead = true;
+        _health = 0;
         OnDeath?.Invoke();
         RpcOnDeath();
         
-        GiveRewards(killerId);
-        StartCoroutine(DestroyAfterDelay(3f));
+        DropLoot(killerId);
+        StartCoroutine(RespawnCoroutine());
     }
-    
+
     [Server]
-    private void GiveRewards(uint killerId)
+    private System.Collections.IEnumerator RespawnCoroutine()
     {
-        // Mirror v96+ - usa NetworkServer.connections com NetworkConnectionToClient
-        foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
-        {
-            if (conn == null || conn.identity == null) continue;
-            
-            if (conn.identity.netId == killerId)
-            {
-                PlayerStats playerStats = conn.identity.GetComponent<PlayerStats>();
-                if (playerStats != null)
-                {
-                    playerStats.AddExperience(expReward);
-                    playerStats.AddGold(goldReward);
-                }
-                break;
-            }
-        }
+        yield return new WaitForSeconds(enemyData?.respawnTime ?? 10f);
+        
+        _health = _maxHealth;
+        _mana = _maxMana;
+        _isDead = false;
+        _currentAggroTarget = 0;
+        
+        RpcOnRespawn();
     }
-    
-    private System.Collections.IEnumerator DestroyAfterDelay(float delay)
+
+    [Server]
+    public void SetAggroTarget(uint targetNetId)
     {
-        yield return new WaitForSeconds(delay);
-        NetworkServer.Destroy(gameObject);
+        _currentAggroTarget = targetNetId;
+        OnAggroChanged?.Invoke();
     }
-    
+
+    [Server]
+    public void ClearAggro()
+    {
+        _currentAggroTarget = 0;
+        OnAggroChanged?.Invoke();
+    }
+    #endregion
+
+    #region Attack
+    [Server]
+    public bool CanAttack()
+    {
+        return !_isDead && Time.time >= lastAttackTime + (attackCooldown / _attackSpeed);
+    }
+
+    [Server]
+    public void PerformAttack(ICharacterStats target)
+    {
+        if (!CanAttack() || target == null || target.IsDead) return;
+        
+        lastAttackTime = Time.time;
+        RpcPlayAttackAnimation();
+    }
+
+    [Server]
+    public int CalculateDamage()
+    {
+        int baseDmg = _attack;
+        float variation = UnityEngine.Random.Range(0.9f, 1.1f);
+        return Mathf.Max(1, Mathf.FloorToInt(baseDmg * variation));
+    }
+    #endregion
+
+    #region RPCs
     [ClientRpc]
     private void RpcOnDamageTaken(int damage)
     {
-        OnHealthUpdated?.Invoke(_health, _maxHealth);
+        OnHealthUpdated?.Invoke();
         
-        if (DamagePopupManager.Instance != null)
-            DamagePopupManager.Instance.ShowDamage(transform.position + Vector3.up * 2f, damage, false);
+        if (TryGetComponent(out HitFlashEffect flash))
+            flash.PlayFlash();
+        
+        DamagePopupManager.Instance?.ShowDamage(
+            transform.position + Vector3.up * 2f, 
+            damage, 
+            false
+        );
     }
-    
+
     [ClientRpc]
     private void RpcOnDeath()
     {
-        OnHealthUpdated?.Invoke(0, _maxHealth);
+        anim?.SetTrigger("Die");
+        anim?.SetBool("IsDead", true);
         
-        if (DamagePopupManager.Instance != null)
-            DamagePopupManager.Instance.ShowText(transform.position + Vector3.up * 2f, "MORTO!", Color.red);
+        if (TryGetComponent(out Collider col))
+            col.enabled = false;
+    }
+
+    [ClientRpc]
+    private void RpcOnRespawn()
+    {
+        anim?.SetBool("IsDead", false);
+        anim?.Play("Idle");
         
-        if (TryGetComponent(out Collider col)) col.enabled = false;
-        if (TryGetComponent(out UnityEngine.AI.NavMeshAgent agent)) agent.enabled = false;
+        if (TryGetComponent(out Collider col))
+            col.enabled = true;
+    }
+
+    [ClientRpc]
+    private void RpcPlayAttackAnimation()
+    {
+        anim?.SetTrigger("Attack");
+        anim?.SetBool("IsAttacking", true);
+    }
+    #endregion
+
+    #region Hooks
+    private void OnHealthChanged(int oldVal, int newVal) => OnHealthUpdated?.Invoke();
+    #endregion
+
+    #region Loot
+    [Server]
+    private void DropLoot(uint killerId)
+    {
+        if (enemyData == null || enemyData.possibleDrops == null) return;
         
-        if (TryGetComponent(out Animator anim))
+        foreach (var drop in enemyData.possibleDrops)
         {
-            anim.SetTrigger("Die");
-            anim.SetBool("IsDead", true);
+            float roll = UnityEngine.Random.Range(0f, 100f);
+            if (roll <= drop.dropChance)
+            {
+                int quantity = UnityEngine.Random.Range(drop.minQuantity, drop.maxQuantity + 1);
+                SpawnWorldDrop(drop.itemId, quantity);
+            }
+        }
+        
+        if (NetworkServer.spawned.TryGetValue(killerId, out NetworkIdentity killerIdentity))
+        {
+            if (killerIdentity.TryGetComponent(out PlayerStats playerStats))
+            {
+                playerStats.AddExperience(enemyData.expReward);
+            }
         }
     }
-    
-    private void OnHealthChanged(int oldVal, int newVal)
+
+    [Server]
+    private void SpawnWorldDrop(string itemId, int quantity)
     {
-        OnHealthUpdated?.Invoke(newVal, _maxHealth);
+        Vector3 dropPos = transform.position + new Vector3(
+            UnityEngine.Random.Range(-1f, 1f), 
+            0.5f, 
+            UnityEngine.Random.Range(-1f, 1f)
+        );
+        
+        GameObject dropObj = new GameObject($"Drop_{itemId}");
+        dropObj.transform.position = dropPos;
+        
+        WorldItem worldItem = dropObj.AddComponent<WorldItem>();
+        ItemData item = ItemDatabase.Instance?.GetItem(itemId);
+        if (item != null)
+        {
+            worldItem.Initialize(item, quantity);
+            NetworkServer.Spawn(dropObj);
+        }
     }
-    
-    public void SetSelected(bool selected)
-    {
-        if (selectionIndicator != null)
-            selectionIndicator.SetActive(selected);
-    }
-    
+    #endregion
+
     void OnDrawGizmosSelected()
     {
         Gizmos.color = Color.red;
-        Gizmos.DrawWireSphere(transform.position, attackRange);
+        Gizmos.DrawWireSphere(transform.position, aggroRange);
+        
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawWireSphere(transform.position, loseAggroRange);
     }
 }

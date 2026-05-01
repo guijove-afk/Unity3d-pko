@@ -1,58 +1,88 @@
 using UnityEngine;
-using UnityEngine.UI;
 
 public class EnemyHealthBar : MonoBehaviour
 {
-    [SerializeField] private Image fillImage;
-    [SerializeField] private Canvas canvas;
-    [SerializeField] private Vector3 offset = new Vector3(0, 2.2f, 0);
-    
-    private EnemyStats stats;
-    private Camera mainCamera;
-    
-    void Awake()
+    [SerializeField] private EnemyStats enemyStats;
+    [SerializeField] private Transform healthBarFill;  // Barra verde/vermelha (Scale X)
+    [SerializeField] private TextMesh healthText;       // Opcional: "HP / MaxHP"
+
+    private void Start()
     {
-        stats = GetComponentInParent<EnemyStats>();
-        mainCamera = Camera.main;
-        
-        if (canvas != null)
-            canvas.worldCamera = mainCamera;
+        if (enemyStats == null)
+            enemyStats = GetComponentInParent<EnemyStats>();
+
+        if (enemyStats != null)
+        {
+            // ✅ CORRETO: Action sem parâmetros
+            enemyStats.OnHealthUpdated += UpdateHealthBar;
+            enemyStats.OnDeath += OnEnemyDeath;
+        }
+
+        UpdateHealthBar();  // Inicializa
     }
-    
-    void OnEnable()
+
+    private void OnDestroy()
     {
-        if (stats != null)
-            stats.OnHealthUpdated += UpdateHealthBar;
+        if (enemyStats != null)
+        {
+            enemyStats.OnHealthUpdated -= UpdateHealthBar;
+            enemyStats.OnDeath -= OnEnemyDeath;
+        }
     }
-    
-    void OnDisable()
+
+    /// <summary>
+    /// ✅ SEM PARÂMETROS — compatível com Action
+    /// </summary>
+    private void UpdateHealthBar()
     {
-        if (stats != null)
-            stats.OnHealthUpdated -= UpdateHealthBar;
+            // 1. Verifica se as referências existem e se MaxHealth é válido para evitar divisão por zero
+    if (enemyStats == null || enemyStats.MaxHealth <= 0) 
+    {
+        return; 
     }
-    
+        if (enemyStats == null) return;
+
+        float healthPercent = (float)enemyStats.Health / enemyStats.MaxHealth;
+        healthPercent = Mathf.Clamp01(healthPercent);
+
+        // Atualiza escala da barra
+        if (healthBarFill != null)
+        {
+            Vector3 scale = healthBarFill.localScale;
+            scale.x = healthPercent;
+            healthBarFill.localScale = scale;
+        }
+
+        // Atualiza texto
+        if (healthText != null)
+        {
+            healthText.text = $"{enemyStats.Health} / {enemyStats.MaxHealth}";
+        }
+
+        // Cor da barra (verde → amarelo → vermelho)
+        if (healthBarFill != null)
+        {
+            Renderer rend = healthBarFill.GetComponent<Renderer>();
+            if (rend != null)
+            {
+                rend.material.color = Color.Lerp(Color.red, Color.green, healthPercent);
+            }
+        }
+    }
+
+    private void OnEnemyDeath()
+    {
+        // Esconde a barra quando morre
+        gameObject.SetActive(false);
+    }
+
     void LateUpdate()
     {
-        if (stats == null) return;
-        
-        // Posicionar acima do inimigo
-        transform.position = stats.transform.position + offset;
-        
-        // Billboard - sempre olhar para a camera
-        if (mainCamera != null)
-            transform.rotation = mainCamera.transform.rotation;
-    }
-    
-    private void UpdateHealthBar(int current, int max)
-    {
-        if (fillImage != null)
+        // Billboard — sempre olha para a câmera
+        if (Camera.main != null)
         {
-            float percent = max > 0 ? (float)current / max : 0;
-            fillImage.fillAmount = percent;
+            transform.LookAt(transform.position + Camera.main.transform.rotation * Vector3.forward,
+                Camera.main.transform.rotation * Vector3.up);
         }
-        
-        // Esconder se estiver morto
-        if (current <= 0 && canvas != null)
-            canvas.enabled = false;
     }
 }
