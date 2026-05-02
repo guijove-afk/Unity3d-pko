@@ -2,7 +2,6 @@ using UnityEngine;
 using Mirror;
 using System;
 
-// REMOVIDO: [RequireComponent(typeof(Animator))] — o Animator fica no filho Mob1, não na raiz.
 [RequireComponent(typeof(CharacterController))]
 public class EnemyStats : NetworkBehaviour, ICharacterStats
 {
@@ -68,7 +67,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [SerializeField] private float wanderInterval = 5f;
 
     [Header("Death Settings")]
-    [SerializeField] private float deathDespawnDelay = 3f; // ✅ Tempo antes de sumir do mapa
+    [SerializeField] private float deathDespawnDelay = 3f;
 
     private Animator anim;
     private float lastAttackTime;
@@ -133,13 +132,24 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
         _attackSpeed = enemyData.attackSpeed;
         _moveSpeed = enemyData.moveSpeed;
         _attackRange = enemyData.attackRange;
+
+        Debug.Log($"[EnemyStats] InitializeFromData: {gameObject.name} | HP={_health}/{_maxHealth} | ATK={_attack} | DEF={_defense} | attackRange={_attackRange} | attackSpeed={_attackSpeed} | moveSpeed={_moveSpeed}");
     }
 
     #region Damage & Death
     [Server]
     public void TakeDamage(int damage, uint attackerId, DamageType damageType = DamageType.Physical)
     {
-        if (_isDead) return;
+        Debug.Log($"[EnemyStats] ════════════════════════════════════════");
+        Debug.Log($"[EnemyStats] TakeDamage CHAMADO em {gameObject.name}");
+        Debug.Log($"[EnemyStats]   → dmg={damage} | attackerId={attackerId} | damageType={damageType}");
+        Debug.Log($"[EnemyStats]   → isDead={_isDead} | HP antes={_health}/{_maxHealth}");
+
+        if (_isDead)
+        {
+            Debug.Log($"[EnemyStats] TakeDamage IGNORADO: {gameObject.name} já está morto");
+            return;
+        }
 
         int finalDamage = damage;
 
@@ -149,9 +159,11 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
             finalDamage = Mathf.Max(1, damage - MagicDefense);
 
         _health = Mathf.Max(0, _health - finalDamage);
+        Debug.Log($"[EnemyStats] {gameObject.name} HP depois={_health} | danoFinal={finalDamage}");
 
         if (!HasAggro)
         {
+            Debug.Log($"[EnemyStats] {gameObject.name} adquirindo aggro de {attackerId}");
             SetAggroTarget(attackerId);
         }
 
@@ -159,6 +171,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
 
         if (_health <= 0)
         {
+            Debug.Log($"[EnemyStats] {gameObject.name} HP <= 0, chamando Die({attackerId})");
             Die(attackerId);
         }
     }
@@ -166,6 +179,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [Server]
     public void TakeTrueDamage(int damage, uint attackerId)
     {
+        Debug.Log($"[EnemyStats] TakeTrueDamage CHAMADO em {gameObject.name} | dmg={damage} | isDead={_isDead}");
         if (_isDead) return;
         _health = Mathf.Max(0, _health - damage);
         RpcOnDamageTaken(damage);
@@ -183,26 +197,25 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [Server]
     private void Die(uint killerId)
     {
+        Debug.Log($"[EnemyStats] Die() chamado em {gameObject.name} | killerId={killerId}");
         _isDead = true;
         _health = 0;
         OnDeath?.Invoke();
 
-        // ✅ NOTIFICA O AI para parar completamente
         enemyAI?.OnDeath();
 
         RpcOnDeath();
 
         DropLoot(killerId);
 
-        // ✅ Começa a coroutine de respawn no servidor
         StartCoroutine(RespawnCoroutine());
     }
 
     [Server]
     private System.Collections.IEnumerator RespawnCoroutine()
     {
-        // Aguarda o tempo de respawn configurado no EnemyData
         float waitTime = enemyData?.respawnTime ?? 10f;
+        Debug.Log($"[EnemyStats] RespawnCoroutine iniciada para {gameObject.name} | esperando {waitTime}s");
         yield return new WaitForSeconds(waitTime);
 
         _health = _maxHealth;
@@ -210,7 +223,8 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
         _isDead = false;
         _currentAggroTarget = 0;
 
-        // ✅ NOTIFICA O AI para reativar
+        Debug.Log($"[EnemyStats] Respawnando {gameObject.name} com HP={_health}/{_maxHealth}");
+
         enemyAI?.OnRespawn();
 
         RpcOnRespawn();
@@ -219,6 +233,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [Server]
     public void SetAggroTarget(uint targetNetId)
     {
+        Debug.Log($"[EnemyStats] SetAggroTarget: {gameObject.name} → {targetNetId}");
         _currentAggroTarget = targetNetId;
         OnAggroChanged?.Invoke();
     }
@@ -226,6 +241,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [Server]
     public void ClearAggro()
     {
+        Debug.Log($"[EnemyStats] ClearAggro: {gameObject.name}");
         _currentAggroTarget = 0;
         OnAggroChanged?.Invoke();
     }
@@ -235,16 +251,48 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [Server]
     public bool CanAttack()
     {
-        return !_isDead && Time.time >= lastAttackTime + (attackCooldown / _attackSpeed);
+        bool canAtk = !_isDead && Time.time >= lastAttackTime + (attackCooldown / _attackSpeed);
+        return canAtk;
     }
 
     [Server]
     public void PerformAttack(ICharacterStats target)
     {
-        if (!CanAttack() || target == null || target.IsDead) return;
+        Debug.Log($"[EnemyStats] ════════════════════════════════════════");
+        Debug.Log($"[EnemyStats] PerformAttack CHAMADO em {gameObject.name}");
+        Debug.Log($"[EnemyStats]   → target={(target != null ? ((Component)target).gameObject.name : "NULL")}");
+        Debug.Log($"[EnemyStats]   → target.IsDead={(target != null ? target.IsDead.ToString() : "N/A")}");
+        Debug.Log($"[EnemyStats]   → CanAttack={CanAttack()} | lastAttackTime={lastAttackTime:F2} | now={Time.time:F2}");
+
+        if (!CanAttack() || target == null || target.IsDead)
+        {
+            Debug.Log($"[EnemyStats] PerformAttack ABORTADO: CanAttack={CanAttack()} | targetNull={target==null} | target.IsDead={(target != null ? target.IsDead : false)}");
+            return;
+        }
 
         lastAttackTime = Time.time;
+
+        int damage = CalculateDamage();
+        Debug.Log($"[EnemyStats] {gameObject.name} calculou dano={damage} contra {((Component)target).gameObject.name}");
+
+        if (target is PlayerStats playerStats)
+        {
+            Debug.Log($"[EnemyStats] Aplicando TakeDamage({damage}) em PlayerStats netId={playerStats.netId}");
+            playerStats.TakeDamage(damage, this.netId, DamageType.Physical);
+        }
+        else if (target is EnemyStats enemyStats)
+        {
+            Debug.Log($"[EnemyStats] Aplicando TakeDamage({damage}) em EnemyStats netId={enemyStats.netId}");
+            enemyStats.TakeDamage(damage, this.netId, DamageType.Physical);
+        }
+        else
+        {
+            Debug.LogWarning($"[EnemyStats] Alvo é tipo desconhecido: {target.GetType().Name}");
+        }
+
         RpcPlayAttackAnimation();
+        Debug.Log($"[EnemyStats] PerformAttack COMPLETO em {gameObject.name}");
+        Debug.Log($"[EnemyStats] ════════════════════════════════════════");
     }
 
     [Server]
@@ -252,7 +300,9 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     {
         int baseDmg = _attack;
         float variation = UnityEngine.Random.Range(0.9f, 1.1f);
-        return Mathf.Max(1, Mathf.FloorToInt(baseDmg * variation));
+        int finalDmg = Mathf.Max(1, Mathf.FloorToInt(baseDmg * variation));
+        Debug.Log($"[EnemyStats] CalculateDamage: base={baseDmg} | variation={variation:F2} | final={finalDmg}");
+        return finalDmg;
     }
     #endregion
 
@@ -287,17 +337,14 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [ClientRpc]
     private void RpcOnDeath()
     {
-        // ✅ Animação de morte: trigger + bool para segurar no estado Dead
         anim?.SetTrigger("Die");
         anim?.SetBool("IsDead", true);
 
-        // ✅ Desativa colliders para não bloquear pathfinding
         foreach (var col in GetComponentsInChildren<Collider>(true))
         {
             if (col != null) col.enabled = false;
         }
 
-        // ✅ Começa coroutine no cliente para sumir do mapa após delay
         StartCoroutine(DespawnVisualCoroutine());
     }
 
@@ -305,7 +352,6 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     {
         yield return new WaitForSeconds(deathDespawnDelay);
 
-        // Esconde o mesh (não destrói — o servidor controla o NetworkIdentity)
         foreach (var renderer in GetComponentsInChildren<Renderer>(true))
         {
             if (renderer != null) renderer.enabled = false;
@@ -315,7 +361,6 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [ClientRpc]
     private void RpcOnRespawn()
     {
-        // ✅ Reativa visual
         foreach (var renderer in GetComponentsInChildren<Renderer>(true))
         {
             if (renderer != null) renderer.enabled = true;
@@ -326,7 +371,6 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
             if (col != null) col.enabled = true;
         }
 
-        // Sai do estado Dead e volta ao Idle
         anim?.SetBool("IsDead", false);
         anim?.Play("Idle", 0, 0f);
     }

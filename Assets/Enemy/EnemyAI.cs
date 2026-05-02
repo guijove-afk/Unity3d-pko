@@ -47,6 +47,8 @@ public class EnemyAI : NetworkBehaviour
         agent.angularSpeed = 360f;
         agent.autoBraking = true;
         agent.updateRotation = true; // ✅ Garante que o NavMeshAgent rotaciona o root
+
+        Debug.Log($"[EnemyAI] OnStartServer: {gameObject.name} | spawn={spawnPosition} | speed={agent.speed} | stoppingDist={stoppingDistance}");
     }
 
     void Update()
@@ -77,14 +79,17 @@ public class EnemyAI : NetworkBehaviour
     [Server]
     private void UpdateAggroBehavior()
     {
+        // ✅ DEBUG: entrou em UpdateAggroBehavior
         if (currentTarget == null || !currentTarget.gameObject.activeInHierarchy)
         {
             if (NetworkServer.spawned.TryGetValue(stats.CurrentAggroTarget, out NetworkIdentity identity))
             {
                 currentTarget = identity.transform;
+                Debug.Log($"[EnemyAI] Alvo resolvido via NetworkServer: {currentTarget.name} netId={identity.netId}");
             }
             else
             {
+                Debug.Log($"[EnemyAI] Alvo {stats.CurrentAggroTarget} não encontrado em NetworkServer.spawned, perdendo aggro");
                 LoseAggro();
                 return;
             }
@@ -96,31 +101,43 @@ public class EnemyAI : NetworkBehaviour
 
         if (distanceToTarget > loseRange)
         {
+            Debug.Log($"[EnemyAI] Distância {distanceToTarget:F2} > loseRange {loseRange:F2}, perdendo aggro");
             LoseAggro();
             return;
         }
 
         ICharacterStats charStats = currentTarget.GetComponent<ICharacterStats>();
 
+        if (charStats == null)
+        {
+            charStats = currentTarget.GetComponentInParent<ICharacterStats>();
+        }
+
         if (charStats == null || charStats.IsDead)
         {
+            Debug.Log($"[EnemyAI] charStats nulo={(charStats==null)} ou morto={(charStats != null && charStats.IsDead)}, perdendo aggro");
             LoseAggro();
             return;
         }
 
-        if (distanceToTarget <= stats.AttackRange + 0.5f)
+        float attackRange = stats.AttackRange + 0.5f;
+
+        if (distanceToTarget <= attackRange)
         {
+            Debug.Log($"[EnemyAI] Dentro da range de ataque ({distanceToTarget:F2} <= {attackRange:F2}) | CanAttack={stats.CanAttack()}");
             agent.ResetPath();
             FaceTarget(currentTarget.position);
 
             if (stats.CanAttack())
             {
+                Debug.Log($"[EnemyAI] Chamando stats.PerformAttack({((Component)charStats).gameObject.name})");
                 stats.PerformAttack(charStats);
             }
         }
         else
         {
             // ✅ PERSEGUIÇÃO: olha para o alvo ENQUANTO anda
+            Debug.Log($"[EnemyAI] Fora da range ({distanceToTarget:F2} > {attackRange:F2}), perseguindo {currentTarget.name}");
             ChaseTarget(currentTarget.position);
         }
     }
@@ -135,6 +152,7 @@ public class EnemyAI : NetworkBehaviour
         {
             if (hit.TryGetComponent(out PlayerStats playerStats) && !playerStats.IsDead)
             {
+                Debug.Log($"[EnemyAI] Player encontrado: {hit.name} netId={playerStats.netId}, adquirindo aggro");
                 stats.SetAggroTarget(playerStats.netId);
                 return;
             }
@@ -153,6 +171,7 @@ public class EnemyAI : NetworkBehaviour
             {
                 currentWanderTarget = hit.position;
                 agent.SetDestination(currentWanderTarget);
+                Debug.Log($"[EnemyAI] Wander para {currentWanderTarget}");
             }
         }
     }
@@ -160,6 +179,7 @@ public class EnemyAI : NetworkBehaviour
     [Server]
     private void LoseAggro()
     {
+        Debug.Log($"[EnemyAI] LoseAggro chamado em {gameObject.name}");
         stats.ClearAggro();
         currentTarget = null;
         agent.ResetPath();
@@ -203,6 +223,7 @@ public class EnemyAI : NetworkBehaviour
     [Server]
     public void OnDeath()
     {
+        Debug.Log($"[EnemyAI] OnDeath chamado em {gameObject.name}");
         isDead = true;
         if (agent.hasPath)
             agent.ResetPath();
@@ -214,6 +235,7 @@ public class EnemyAI : NetworkBehaviour
     [Server]
     public void OnRespawn()
     {
+        Debug.Log($"[EnemyAI] OnRespawn chamado em {gameObject.name}");
         isDead = false;
         agent.enabled = true;
         agent.Warp(spawnPosition); // Teleporta para spawn sem interpolar
