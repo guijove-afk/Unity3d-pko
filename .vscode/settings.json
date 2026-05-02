@@ -68,5 +68,7 @@
         "*.slnx": "*.csproj"
     },
     "dotnet.defaultSolution": "Tales of Pirates Unity.slnx",
-    "dotnet.enableWorkspaceBasedDevelopment": false
+    "dotnet.enableWorkspaceBasedDevelopment": false,
+    "continue.enableNextEdit": true,
+    "continue.enableQuickActions": false
 }

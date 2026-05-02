@@ -9,22 +9,34 @@ public class EnemyAI : NetworkBehaviour
     [Header("AI Settings")]
     [SerializeField] private float stoppingDistance = 1.5f;
     [SerializeField] private float rotationSpeed = 10f;
-    
+
     private NavMeshAgent agent;
     private Animator anim;
     private EnemyStats stats;
-    
+
     private Vector3 spawnPosition;
     private Vector3 currentWanderTarget;
     private float lastWanderTime;
-    
+
     private Transform currentTarget;
+    private bool isDead = false;
 
     void Awake()
     {
         agent = GetComponent<NavMeshAgent>();
-        anim = GetComponent<Animator>();
         stats = GetComponent<EnemyStats>();
+    }
+
+    void Start()
+    {
+        if (anim == null && stats != null)
+            anim = stats.CharacterAnimator;
+
+        // ✅ DEBUG: confirma qual Animator o AI está usando
+        if (anim != null)
+            Debug.Log($"[EnemyAI] Animator vinculado: {anim.name} | controller={(anim.runtimeAnimatorController ? anim.runtimeAnimatorController.name : "NULL")}", this);
+        else
+            Debug.LogError($"[EnemyAI] Animator NULO em {gameObject.name}! Verifique EnemyStats.CharacterAnimator.", this);
     }
 
     public override void OnStartServer()
@@ -34,12 +46,21 @@ public class EnemyAI : NetworkBehaviour
         agent.stoppingDistance = stoppingDistance;
         agent.angularSpeed = 360f;
         agent.autoBraking = true;
+        agent.updateRotation = true; // ✅ Garante que o NavMeshAgent rotaciona o root
     }
 
     void Update()
     {
-        if (!isServer || stats.IsDead) return;
-        
+        if (!isServer) return;
+
+        // ✅ Se morto, para TODA a lógica de AI
+        if (stats.IsDead || isDead)
+        {
+            if (agent.hasPath)
+                agent.ResetPath();
+            return;
+        }
+
         UpdateAI();
         UpdateAnimation();
     }
@@ -70,10 +91,9 @@ public class EnemyAI : NetworkBehaviour
         }
 
         float distanceToTarget = Vector3.Distance(transform.position, currentTarget.position);
-        
-        // ✅ USA A PROPRIEDADE PÚBLICA EnemyData em vez de enemyData
+
         float loseRange = stats.EnemyData != null ? stats.EnemyData.aggroRange * 2f : 15f;
-        
+
         if (distanceToTarget > loseRange)
         {
             LoseAggro();
@@ -92,7 +112,7 @@ public class EnemyAI : NetworkBehaviour
         {
             agent.ResetPath();
             FaceTarget(currentTarget.position);
-            
+
             if (stats.CanAttack())
             {
                 stats.PerformAttack(charStats);
@@ -100,6 +120,7 @@ public class EnemyAI : NetworkBehaviour
         }
         else
         {
+            // ✅ PERSEGUIÇÃO: olha para o alvo ENQUANTO anda
             ChaseTarget(currentTarget.position);
         }
     }
@@ -107,10 +128,9 @@ public class EnemyAI : NetworkBehaviour
     [Server]
     private void UpdateIdleBehavior()
     {
-        // ✅ USA A PROPRIEDADE PÚBLICA EnemyData
         float aggroRange = stats.EnemyData != null ? stats.EnemyData.aggroRange : 8f;
         Collider[] hits = Physics.OverlapSphere(transform.position, aggroRange);
-        
+
         foreach (var hit in hits)
         {
             if (hit.TryGetComponent(out PlayerStats playerStats) && !playerStats.IsDead)
@@ -120,17 +140,15 @@ public class EnemyAI : NetworkBehaviour
             }
         }
 
-        // ✅ USA A PROPRIEDADE EnemyData e o wanderRadius DE LÁ
-        if (stats.EnemyData != null && stats.EnemyData.canWander && 
-            Time.time >= lastWanderTime + 5f)
+        if (stats.EnemyData != null && stats.EnemyData.canWander &&
+            Time.time >= lastWanderTime + Mathf.Max(0.5f, stats.WanderInterval))
         {
             lastWanderTime = Time.time;
-            
-            // ✅ USA wanderRadius DO EnemyData, não de EnemyStats
-            float wanderRadius = stats.EnemyData.canPatrol ? 2f : 5f; // ou adicione wanderRadius no EnemyData
-            Vector3 randomDirection = Random.insideUnitSphere * wanderRadius;
+
+            float radial = stats.EnemyData.canPatrol ? 2f : stats.WanderRadius;
+            Vector3 randomDirection = Random.insideUnitSphere * radial;
             randomDirection += spawnPosition;
-            
+
             if (NavMesh.SamplePosition(randomDirection, out NavMeshHit hit, 5f, NavMesh.AllAreas))
             {
                 currentWanderTarget = hit.position;
@@ -160,18 +178,46 @@ public class EnemyAI : NetworkBehaviour
         if (NavMesh.SamplePosition(targetPosition, out NavMeshHit hit, 5f, NavMesh.AllAreas))
         {
             agent.SetDestination(hit.position);
+
+            // ✅ ROTACIONA enquanto persegue (o NavMeshAgent move, mas olhar para frente é feito aqui)
+            if (agent.hasPath && agent.pathPending == false)
+            {
+                Vector3 nextCorner = agent.path.corners.Length > 1 ? agent.path.corners[1] : targetPosition;
+                FaceTarget(nextCorner);
+            }
         }
     }
 
     private void UpdateAnimation()
     {
         if (anim == null) return;
-        
+
         bool isMoving = agent.hasPath && agent.remainingDistance > agent.stoppingDistance + 0.1f;
         float velocity = agent.velocity.magnitude / Mathf.Max(agent.speed, 0.01f);
-        
+
         anim.SetBool("IsMoving", isMoving);
         anim.SetFloat("MoveSpeed", velocity);
+    }
+
+    // ✅ Chamado pelo EnemyStats quando morre — garante que AI pare
+    [Server]
+    public void OnDeath()
+    {
+        isDead = true;
+        if (agent.hasPath)
+            agent.ResetPath();
+        agent.enabled = false; // Desativa completamente o agent
+        currentTarget = null;
+    }
+
+    // ✅ Chamado pelo EnemyStats quando respawna — reativa o agent
+    [Server]
+    public void OnRespawn()
+    {
+        isDead = false;
+        agent.enabled = true;
+        agent.Warp(spawnPosition); // Teleporta para spawn sem interpolar
+        transform.position = spawnPosition;
     }
 
     void OnDrawGizmosSelected()

@@ -1,24 +1,30 @@
 using UnityEngine;
 using Mirror;
 
-public class EnemyAnimationEvents : NetworkBehaviour
+/// <summary>
+/// Deve ficar no mesmo GameObject do <see cref="Animator"/> que toca Attack1 (ex.: filho Mob1).
+/// Stats / NetworkIdentity ficam na raiz Enemy_* — use sempre GetComponentInParent.
+/// </summary>
+public class EnemyAnimationEvents : MonoBehaviour
 {
     private EnemyStats stats;
     private EnemyAI enemyAI;
-    private Animator anim;  // ✅ ADICIONADO
+    private Animator anim;
+    private NetworkIdentity networkIdentity;
 
     void Awake()
     {
-        stats = GetComponent<EnemyStats>();
-        enemyAI = GetComponent<EnemyAI>();
-        anim = GetComponent<Animator>();  // ✅ INICIALIZADO
+        stats = GetComponentInParent<EnemyStats>();
+        enemyAI = GetComponentInParent<EnemyAI>();
+        anim = GetComponent<Animator>();
+        networkIdentity = GetComponentInParent<NetworkIdentity>();
     }
 
     // Chamado pelo Animation Event no frame do golpe
-    public void OnAttackHit()
+    public void AnimEvent_AttackHit()
     {
-        if (!isServer) return;
-        if (stats.IsDead) return;
+        if (networkIdentity == null || !networkIdentity.isServer) return;
+        if (stats == null || stats.IsDead) return;
         if (!stats.HasAggro) return;
 
         if (NetworkServer.spawned.TryGetValue(stats.CurrentAggroTarget, out NetworkIdentity targetIdentity))
@@ -28,26 +34,15 @@ public class EnemyAnimationEvents : NetworkBehaviour
                 if (!targetStats.IsDead)
                 {
                     int damage = stats.CalculateDamage();
-                    targetStats.TakeDamage(damage, netId, DamageType.Physical);
-                    RpcPlayHitEffect(targetIdentity.transform.position);
+                    targetStats.TakeDamage(damage, networkIdentity.netId, DamageType.Physical);
                 }
             }
         }
     }
 
     // Chamado no final da animação de ataque
-    public void OnAttackEnd()
+    public void AnimEvent_AttackEnd()
     {
-        if (anim != null)  // ✅ USANDO anim
-        {
-            anim.SetBool("IsAttacking", false);
-        }
-    }
-
-    [ClientRpc]
-    private void RpcPlayHitEffect(Vector3 position)
-    {
-        // Som de hit
-        // Partículas
+        anim?.SetBool("IsAttacking", false);
     }
 }

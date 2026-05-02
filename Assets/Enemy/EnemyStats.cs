@@ -2,7 +2,7 @@ using UnityEngine;
 using Mirror;
 using System;
 
-[RequireComponent(typeof(Animator))]
+// REMOVIDO: [RequireComponent(typeof(Animator))] — o Animator fica no filho Mob1, não na raiz.
 [RequireComponent(typeof(CharacterController))]
 public class EnemyStats : NetworkBehaviour, ICharacterStats
 {
@@ -11,11 +11,11 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [SyncVar] private int _maxHealth;
     [SyncVar] private int _mana;
     [SyncVar] private int _maxMana;
-    
+
     [SyncVar] private int _level = 1;
     [SyncVar] private string _enemyName = "Monster";
     [SyncVar] private bool _isDead = false;
-    
+
     [SyncVar] private int _attack;
     [SyncVar] private int _defense;
     [SyncVar] private int _magicAttack;
@@ -23,7 +23,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     [SyncVar] private float _attackSpeed = 1f;
     [SyncVar] private float _moveSpeed = 3f;
     [SyncVar] private int _attackRange = 2;
-    
+
     [SyncVar] private uint _currentAggroTarget;
     #endregion
 
@@ -35,7 +35,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     public int Level => _level;
     public string EnemyName => _enemyName;
     public bool IsDead => _isDead;
-    
+
     public int Attack => _attack;
     public int Defense => _defense;
     public int MagicAttack => _magicAttack;
@@ -43,11 +43,13 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     public float AttackSpeed => _attackSpeed;
     public float MoveSpeed => _moveSpeed;
     public int AttackRange => _attackRange;
-    
+
     public uint CurrentAggroTarget => _currentAggroTarget;
     public bool HasAggro => _currentAggroTarget != 0;
-    
-    // ✅ PROPRIEDADE PÚBLICA para acesso controlado ao enemyData
+
+    public float WanderRadius => wanderRadius;
+    public float WanderInterval => wanderInterval;
+
     public EnemyData EnemyData => enemyData;
     #endregion
 
@@ -58,26 +60,53 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     #endregion
 
     [Header("Configurações")]
-    [SerializeField] private EnemyData enemyData;  // ✅ Privado, acesso via propriedade
+    [SerializeField] private EnemyData enemyData;
     [SerializeField] private float aggroRange = 8f;
     [SerializeField] private float loseAggroRange = 15f;
     [SerializeField] private float attackCooldown = 1.5f;
     [SerializeField] private float wanderRadius = 5f;
     [SerializeField] private float wanderInterval = 5f;
 
+    [Header("Death Settings")]
+    [SerializeField] private float deathDespawnDelay = 3f; // ✅ Tempo antes de sumir do mapa
+
     private Animator anim;
     private float lastAttackTime;
+    private EnemyAI enemyAI;
+
+    public Animator CharacterAnimator => anim;
 
     void Awake()
     {
-        anim = GetComponent<Animator>();
+        anim = ResolveCharacterAnimator();
+        enemyAI = GetComponent<EnemyAI>();
+
+        if (anim != null)
+            Debug.Log($"[EnemyStats] Animator resolvido: {anim.name} (controller={(anim.runtimeAnimatorController ? anim.runtimeAnimatorController.name : "NULL")})", this);
+        else
+            Debug.LogError($"[EnemyStats] NENHUM Animator com controller encontrado em {gameObject.name} ou seus filhos!", this);
+    }
+
+    private Animator ResolveCharacterAnimator()
+    {
+        var a = GetComponent<Animator>();
+        if (a != null && a.runtimeAnimatorController != null)
+            return a;
+
+        foreach (var child in GetComponentsInChildren<Animator>(true))
+        {
+            if (child != null && child.runtimeAnimatorController != null)
+                return child;
+        }
+
+        return a;
     }
 
     void Start()
     {
         if (isServer)
         {
-            _currentAggroTarget = 0; // Garante estado inicial limpo
+            _currentAggroTarget = 0;
             InitializeFromData();
         }
     }
@@ -157,22 +186,33 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
         _isDead = true;
         _health = 0;
         OnDeath?.Invoke();
+
+        // ✅ NOTIFICA O AI para parar completamente
+        enemyAI?.OnDeath();
+
         RpcOnDeath();
-        
+
         DropLoot(killerId);
+
+        // ✅ Começa a coroutine de respawn no servidor
         StartCoroutine(RespawnCoroutine());
     }
 
     [Server]
     private System.Collections.IEnumerator RespawnCoroutine()
     {
-        yield return new WaitForSeconds(enemyData?.respawnTime ?? 10f);
-        
+        // Aguarda o tempo de respawn configurado no EnemyData
+        float waitTime = enemyData?.respawnTime ?? 10f;
+        yield return new WaitForSeconds(waitTime);
+
         _health = _maxHealth;
         _mana = _maxMana;
         _isDead = false;
         _currentAggroTarget = 0;
-        
+
+        // ✅ NOTIFICA O AI para reativar
+        enemyAI?.OnRespawn();
+
         RpcOnRespawn();
     }
 
@@ -202,7 +242,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     public void PerformAttack(ICharacterStats target)
     {
         if (!CanAttack() || target == null || target.IsDead) return;
-        
+
         lastAttackTime = Time.time;
         RpcPlayAttackAnimation();
     }
@@ -221,35 +261,74 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     private void RpcOnDamageTaken(int damage)
     {
         OnHealthUpdated?.Invoke();
-        
+
         if (TryGetComponent(out HitFlashEffect flash))
             flash.PlayFlash();
-        
+
         DamagePopupManager.Instance?.ShowDamage(
-            transform.position + Vector3.up * 2f, 
-            damage, 
+            transform.position + Vector3.up * 2f,
+            damage,
             false
         );
+
+        if (anim != null && anim.runtimeAnimatorController != null)
+        {
+            foreach (var p in anim.parameters)
+            {
+                if (p.type == AnimatorControllerParameterType.Trigger && p.name == "Hit")
+                {
+                    anim.SetTrigger("Hit");
+                    break;
+                }
+            }
+        }
     }
 
     [ClientRpc]
     private void RpcOnDeath()
     {
+        // ✅ Animação de morte: trigger + bool para segurar no estado Dead
         anim?.SetTrigger("Die");
         anim?.SetBool("IsDead", true);
-        
-        if (TryGetComponent(out Collider col))
-            col.enabled = false;
+
+        // ✅ Desativa colliders para não bloquear pathfinding
+        foreach (var col in GetComponentsInChildren<Collider>(true))
+        {
+            if (col != null) col.enabled = false;
+        }
+
+        // ✅ Começa coroutine no cliente para sumir do mapa após delay
+        StartCoroutine(DespawnVisualCoroutine());
+    }
+
+    private System.Collections.IEnumerator DespawnVisualCoroutine()
+    {
+        yield return new WaitForSeconds(deathDespawnDelay);
+
+        // Esconde o mesh (não destrói — o servidor controla o NetworkIdentity)
+        foreach (var renderer in GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer != null) renderer.enabled = false;
+        }
     }
 
     [ClientRpc]
     private void RpcOnRespawn()
     {
+        // ✅ Reativa visual
+        foreach (var renderer in GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer != null) renderer.enabled = true;
+        }
+
+        foreach (var col in GetComponentsInChildren<Collider>(true))
+        {
+            if (col != null) col.enabled = true;
+        }
+
+        // Sai do estado Dead e volta ao Idle
         anim?.SetBool("IsDead", false);
-        anim?.Play("Idle");
-        
-        if (TryGetComponent(out Collider col))
-            col.enabled = true;
+        anim?.Play("Idle", 0, 0f);
     }
 
     [ClientRpc]
@@ -269,7 +348,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     private void DropLoot(uint killerId)
     {
         if (enemyData == null || enemyData.possibleDrops == null) return;
-        
+
         foreach (var drop in enemyData.possibleDrops)
         {
             float roll = UnityEngine.Random.Range(0f, 100f);
@@ -279,7 +358,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
                 SpawnWorldDrop(drop.itemId, quantity);
             }
         }
-        
+
         if (NetworkServer.spawned.TryGetValue(killerId, out NetworkIdentity killerIdentity))
         {
             if (killerIdentity.TryGetComponent(out PlayerStats playerStats))
@@ -297,10 +376,10 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
             0.5f, 
             UnityEngine.Random.Range(-1f, 1f)
         );
-        
+
         GameObject dropObj = new GameObject($"Drop_{itemId}");
         dropObj.transform.position = dropPos;
-        
+
         WorldItem worldItem = dropObj.AddComponent<WorldItem>();
         ItemData item = ItemDatabase.Instance?.GetItem(itemId);
         if (item != null)
@@ -315,7 +394,7 @@ public class EnemyStats : NetworkBehaviour, ICharacterStats
     {
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, aggroRange);
-        
+
         Gizmos.color = Color.yellow;
         Gizmos.DrawWireSphere(transform.position, loseAggroRange);
     }
